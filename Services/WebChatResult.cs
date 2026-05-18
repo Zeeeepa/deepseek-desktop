@@ -9,6 +9,9 @@ public sealed class WebChatResult
     /// <summary>OpenAI 风格：stop / length / tool_calls 等。</summary>
     public string? FinishReason { get; init; }
     public bool IsLikelyTruncated { get; init; }
+
+    /// <summary>DeepSeek 网页 chat_session_id（多轮 session_id 绑定用）。</summary>
+    public string? ChatSessionId { get; init; }
 }
 
 public sealed class WebToolCall

@@ -16,6 +16,7 @@ public sealed class LocalOpenAiServer : IDisposable
     };
 
     private readonly WebInjectService _web;
+    private readonly Chat2ApiSessionStore _sessions = new();
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private AppConfig _config = new();
@@ -24,7 +25,14 @@ public sealed class LocalOpenAiServer : IDisposable
 
     public string BaseUrl => $"http://127.0.0.1:{_config.LocalApiPort}/v1";
 
-    public void UpdateConfig(AppConfig config) => _config = config;
+    public void UpdateConfig(AppConfig config)
+    {
+        var portChanged = _config.LocalApiPort != config.LocalApiPort;
+        _config = config;
+        Chat2ApiCompat.EnsureDefaultMappings(_config);
+        if (portChanged && _listener is { IsListening: true })
+            Start();
+    }
 
     public void Start()
     {
@@ -76,21 +84,84 @@ public sealed class LocalOpenAiServer : IDisposable
                 return;
             }
 
+            if (ctx.Request.HttpMethod == "GET" &&
+                (path.Equals("/v1/health", StringComparison.OrdinalIgnoreCase) ||
+                 path.Equals("/health", StringComparison.OrdinalIgnoreCase)))
+            {
+                await WriteJsonAsync(ctx, 200, await BuildHealthPayloadAsync());
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "GET" &&
+                (path.Equals("/v1/providers", StringComparison.OrdinalIgnoreCase) ||
+                 path.Equals("/v1/integration", StringComparison.OrdinalIgnoreCase)))
+            {
+                Chat2ApiHealth? probe = null;
+                try
+                {
+                    probe = await _web.ProbeChat2ApiHealthAsync(_config.WebUserToken, BaseUrl);
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                var snap = Chat2ApiProviderService.Build(_config, probe);
+                await WriteJsonAsync(ctx, 200, Chat2ApiProviderService.ToApiPayload(snap));
+                return;
+            }
+
+            if (!TryAuthorize(ctx, out var authError))
+            {
+                await WriteJsonAsync(ctx, 401, authError!);
+                return;
+            }
+
             if (ctx.Request.HttpMethod == "GET" && path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase))
             {
                 await WriteJsonAsync(ctx, 200, new
                 {
                     @object = "list",
-                    data = new object[]
-                    {
-                        new { id = "deepseek-chat", @object = "model" },
-                        new { id = "deepseek-reasoner", @object = "model" },
-                        new { id = "DeepSeek-V3.2", @object = "model" },
-                        new { id = "DeepSeek-R1", @object = "model" },
-                        new { id = "DeepSeek-Search", @object = "model" },
-                        new { id = "deepseek-web", @object = "model" }
-                    }
+                    data = Chat2ApiCompat.ListModels(_config)
                 });
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "GET" &&
+                path.StartsWith("/v1/models/", StringComparison.OrdinalIgnoreCase))
+            {
+                var modelId = Uri.UnescapeDataString(path["/v1/models/".Length..]);
+                var model = Chat2ApiCompat.GetModel(modelId, _config);
+                if (model is null)
+                {
+                    await WriteJsonAsync(ctx, 404,
+                        new { error = new { message = "Model not found", type = "invalid_request_error" } });
+                    return;
+                }
+
+                await WriteJsonAsync(ctx, 200, model);
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "GET" &&
+                path.Equals("/v1/admin/sessions", StringComparison.OrdinalIgnoreCase) &&
+                LocalApiKeyService.IsLoopback(ctx.Request))
+            {
+                await WriteJsonAsync(ctx, 200, new
+                {
+                    sessions = _sessions.ListSessions(_config),
+                    mode = _config.Chat2ApiSessionMode
+                });
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "DELETE" &&
+                path.StartsWith("/v1/admin/sessions/", StringComparison.OrdinalIgnoreCase) &&
+                LocalApiKeyService.IsLoopback(ctx.Request))
+            {
+                var sid = Uri.UnescapeDataString(path["/v1/admin/sessions/".Length..]);
+                var ok = _sessions.Delete(sid);
+                await WriteJsonAsync(ctx, ok ? 200 : 404, new { success = ok });
                 return;
             }
 
@@ -99,7 +170,15 @@ public sealed class LocalOpenAiServer : IDisposable
             {
                 using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
                 var bodyText = await reader.ReadToEndAsync();
-                var response = await HandleChatCompletionAsync(bodyText);
+                var req = Chat2ApiCompat.ParseCompletion(bodyText, ctx.Request, _config, _sessions);
+
+                if (req.Stream)
+                {
+                    await HandleChatCompletionStreamAsync(ctx, req);
+                    return;
+                }
+
+                var response = await HandleChatCompletionAsync(req);
                 await WriteJsonAsync(ctx, 200, response);
                 return;
             }
@@ -112,68 +191,86 @@ public sealed class LocalOpenAiServer : IDisposable
         }
     }
 
-    private async Task<object> HandleChatCompletionAsync(string bodyText)
+    private async Task HandleChatCompletionStreamAsync(
+        HttpListenerContext ctx,
+        Chat2ApiCompat.CompletionRequest req)
     {
-        using var doc = JsonDocument.Parse(bodyText);
-        var root = doc.RootElement;
-        var model = root.TryGetProperty("model", out var m) ? m.GetString() ?? "deepseek-chat" : "deepseek-chat";
-        var stream = root.TryGetProperty("stream", out var s) && s.GetBoolean();
-        if (stream)
-            throw new NotSupportedException("流式输出暂未实现，请设置 stream=false");
+        try
+        {
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "text/event-stream";
+            ctx.Response.Headers.Add("Cache-Control", "no-cache");
+            ctx.Response.Headers.Add("Access-Control-Allow-Origin", "*");
 
-        var thinking = root.TryGetProperty("ds_thinking", out var thinkEl) && thinkEl.ValueKind == JsonValueKind.True;
-        if (!thinking)
-            thinking = model.Contains("reasoner", StringComparison.OrdinalIgnoreCase)
-                       || model.Contains("think", StringComparison.OrdinalIgnoreCase);
+            var events = ExecuteChatStreamAsync(req);
+            await Chat2ApiSseWriter.PipeWebStreamAsync(
+                ctx.Response.OutputStream, events, req.RequestedModel, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            if (!ctx.Response.OutputStream.CanWrite)
+                throw;
+            var err = JsonSerializer.Serialize(new
+            {
+                error = new { message = ex.Message, type = "server_error" }
+            }, JsonOptions);
+            await WriteRawAsync(ctx, $"data: {err}\n\ndata: [DONE]\n\n");
+        }
+        finally
+        {
+            ctx.Response.Close();
+        }
+    }
 
-        var search = root.TryGetProperty("ds_search", out var searchEl) && searchEl.ValueKind == JsonValueKind.True;
-        if (!search)
-            search = model.Contains("search", StringComparison.OrdinalIgnoreCase);
+    private async IAsyncEnumerable<WebChatStreamEvent> ExecuteChatStreamAsync(
+        Chat2ApiCompat.CompletionRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(_config.WebUserToken))
+            throw new InvalidOperationException("请先在 DeepSeek 网页登录，本地 API 将自动使用网页会话，无需填写 API Key。");
 
         var prevRefIds = _web.AgentRefFileIds;
-        if (root.TryGetProperty("ref_file_ids", out var refEl) && refEl.ValueKind == JsonValueKind.Array)
+        _web.AgentRefFileIds = req.RefFileIds;
+
+        WebChatResult? finalResult = null;
+        try
         {
-            var ids = new List<string>();
-            foreach (var item in refEl.EnumerateArray())
+            await foreach (var ev in _web.WebChatStreamAsync(
+                               req.Messages,
+                               req.ResolvedModel,
+                               req.Thinking,
+                               req.WebSearch,
+                               CancellationToken.None,
+                               _config.WebUserToken,
+                               req.WebChatSessionId))
             {
-                var id = item.ValueKind == JsonValueKind.String ? item.GetString() : item.GetRawText();
-                if (!string.IsNullOrWhiteSpace(id))
-                    ids.Add(id.Trim().Trim('"'));
-            }
-            _web.AgentRefFileIds = ids;
-        }
-
-        var messages = new List<ChatMessage>();
-        if (root.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var msg in msgs.EnumerateArray())
-            {
-                var role = msg.GetProperty("role").GetString() ?? "user";
-                var chatMsg = new ChatMessage { Role = role };
-
-                if (msg.TryGetProperty("content", out var c) && c.ValueKind != JsonValueKind.Null)
-                    chatMsg.Content = c.ValueKind == JsonValueKind.String ? c.GetString() : c.GetRawText();
-
-                if (msg.TryGetProperty("tool_call_id", out var tid))
-                    chatMsg.ToolCallId = tid.GetString();
-
-                if (msg.TryGetProperty("tool_calls", out var tcs) && tcs.ValueKind == JsonValueKind.Array)
-                {
-                    chatMsg.ToolCalls = new List<WebToolCall>();
-                    foreach (var tc in tcs.EnumerateArray())
-                    {
-                        chatMsg.ToolCalls.Add(new WebToolCall
-                        {
-                            Id = tc.GetProperty("id").GetString() ?? Guid.NewGuid().ToString("N"),
-                            Name = tc.GetProperty("function").GetProperty("name").GetString() ?? "",
-                            Arguments = tc.GetProperty("function").GetProperty("arguments").GetString() ?? "{}"
-                        });
-                    }
-                }
-
-                messages.Add(chatMsg);
+                if (ev is WebChatStreamDone done)
+                    finalResult = done.Result;
+                yield return ev;
             }
         }
+        finally
+        {
+            _web.AgentRefFileIds = prevRefIds;
+        }
+
+        if (finalResult is not null &&
+            !string.IsNullOrWhiteSpace(req.SessionId) &&
+            !string.IsNullOrWhiteSpace(finalResult.ChatSessionId))
+            _sessions.Bind(_config, req.SessionId, finalResult.ChatSessionId);
+        else if (!string.IsNullOrWhiteSpace(req.SessionId))
+            _sessions.Touch(_config, req.SessionId);
+    }
+
+    private async Task<object> HandleChatCompletionAsync(Chat2ApiCompat.CompletionRequest req)
+    {
+        var result = await ExecuteChatAsync(req);
+        return BuildChatResponse(result, req.RequestedModel);
+    }
+
+    private async Task<WebChatResult> ExecuteChatAsync(Chat2ApiCompat.CompletionRequest req)
+    {
+        var prevRefIds = _web.AgentRefFileIds;
+        _web.AgentRefFileIds = req.RefFileIds;
 
         if (string.IsNullOrWhiteSpace(_config.WebUserToken))
             throw new InvalidOperationException("请先在 DeepSeek 网页登录，本地 API 将自动使用网页会话，无需填写 API Key。");
@@ -181,17 +278,30 @@ public sealed class LocalOpenAiServer : IDisposable
         WebChatResult result;
         try
         {
-            result = await _web.WebChatAsync(messages, model, thinking, search, CancellationToken.None);
+            result = await _web.WebChatAsync(
+                req.Messages,
+                req.ResolvedModel,
+                req.Thinking,
+                req.WebSearch,
+                CancellationToken.None,
+                _config.WebUserToken,
+                req.WebChatSessionId);
         }
         finally
         {
             _web.AgentRefFileIds = prevRefIds;
         }
 
-        return BuildChatResponse(result);
+        if (!string.IsNullOrWhiteSpace(req.SessionId) &&
+            !string.IsNullOrWhiteSpace(result.ChatSessionId))
+            _sessions.Bind(_config, req.SessionId, result.ChatSessionId);
+        else if (!string.IsNullOrWhiteSpace(req.SessionId))
+            _sessions.Touch(_config, req.SessionId);
+
+        return result;
     }
 
-    private static object BuildChatResponse(WebChatResult result)
+    private static object BuildChatResponse(WebChatResult result, string? requestedModel = null)
     {
         object message;
         if (result.ToolCalls is { Count: > 0 })
@@ -243,6 +353,71 @@ public sealed class LocalOpenAiServer : IDisposable
         };
     }
 
+    private bool TryAuthorize(HttpListenerContext ctx, out object? error)
+    {
+        error = null;
+        if (LocalApiKeyService.TryValidate(_config, ctx.Request, out var matched))
+        {
+            if (matched is not null)
+                LocalApiKeyService.RecordUsage(_config, matched);
+            return true;
+        }
+
+        var hasKey = !string.IsNullOrWhiteSpace(LocalApiKeyService.ExtractProvidedKey(ctx.Request));
+        error = new
+        {
+            error = new
+            {
+                message = hasKey ? "Invalid API key" : "API key is required",
+                type = "invalid_request_error",
+                code = hasKey ? "invalid_api_key" : "missing_api_key"
+            }
+        };
+        return false;
+    }
+
+    private async Task<object> BuildHealthPayloadAsync()
+    {
+        var health = await _web.ProbeChat2ApiHealthAsync(_config.WebUserToken, BaseUrl);
+        var snap = Chat2ApiProviderService.Build(_config, health);
+        var keys = _config.LocalApiKeys;
+        return new
+        {
+            status = health.CanChat ? "ok" : "degraded",
+            summary = health.Summary,
+            api_listening = health.ApiListening,
+            config_logged_in = health.ConfigLoggedIn,
+            bridge_ready = health.BridgeReady,
+            bridge_has_user_token = health.BridgeHasUserToken,
+            bridge_page = health.BridgePage,
+            base_url = health.BaseUrl,
+            api_key_auth_enabled = LocalApiKeyService.ShouldEnforceAuth(_config),
+            api_key_count = keys.Count,
+            api_key_enabled_count = keys.Count(k => k.Enabled),
+            session_mode = _config.Chat2ApiSessionMode,
+            active_sessions = _sessions.Count,
+            error = health.Error,
+            provider = new
+            {
+                snap.Id,
+                snap.Name,
+                snap.Type,
+                snap.Online,
+                snap.AuthType,
+                snap.ModelCount,
+                snap.Chat2ApiBaseUrl,
+                api_key_masked = snap.ApiKeyMasked
+            },
+            deepseek_tui = new
+            {
+                runtime_url = snap.TuiRuntimeUrl,
+                config_path = snap.TuiConfigPath,
+                integration_file = snap.IntegrationFilePath,
+                chat2api_base_url = snap.Chat2ApiBaseUrl
+            }
+        };
+    }
+
     private static async Task WriteJsonAsync(HttpListenerContext ctx, int status, object payload)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
@@ -251,6 +426,12 @@ public sealed class LocalOpenAiServer : IDisposable
         ctx.Response.Headers.Add("Access-Control-Allow-Origin", "*");
         await ctx.Response.OutputStream.WriteAsync(bytes);
         ctx.Response.Close();
+    }
+
+    private static async Task WriteRawAsync(HttpListenerContext ctx, string text)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        await ctx.Response.OutputStream.WriteAsync(bytes);
     }
 
     public void Dispose() => Stop();

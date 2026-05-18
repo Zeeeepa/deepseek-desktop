@@ -16,6 +16,7 @@
     loggedIn: false,
     authResolved: false,
     running: false,
+    stopping: false,
     sessionMetas: [],
     activeSession: null,
     activeSessionId: null,
@@ -119,6 +120,7 @@
       createdAt: state.activeSession.createdAt || Date.now(),
       updatedAt: Date.now(),
       messages: state.activeSession.messages || [],
+      tuiThreadId: state.activeSession.tuiThreadId || null,
     };
   }
 
@@ -228,13 +230,42 @@
     $("empty-state")?.classList.remove("ds-hidden");
   }
 
+  const ICON_SEND =
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.4 20.6l17.6-8.2c.8-.4.8-1.5 0-1.9L3.4 2.3c-.8-.4-1.6.3-1.4 1.2l2.1 7.3c.1.4.5.7.9.7h6.2c.6 0 1 .4 1 1s-.4 1-1 1H5c-.4 0-.8.3-.9.7l-2.1 7.3c-.2.9.6 1.6 1.4 1.2z"/></svg>';
+  const ICON_STOP =
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>';
+
+  function setSendButtonMode(mode) {
+    const send = $("btn-send");
+    if (!send) return;
+    const stopping = mode === "stopping";
+    const running = mode === "running" || stopping;
+    send.classList.toggle("ds-stop-mode", running);
+    send.innerHTML = running ? ICON_STOP : ICON_SEND;
+    if (running) {
+      send.disabled = stopping;
+      send.setAttribute("aria-label", stopping ? "正在停止" : "停止");
+      send.title = stopping ? "正在停止…" : "停止生成";
+    } else {
+      send.setAttribute("aria-label", "发送");
+      send.title = "";
+    }
+  }
+
   function updateComposerState() {
     const input = $("chat-input");
     const send = $("btn-send");
+    if (state.running) {
+      setSendButtonMode(state.stopping ? "stopping" : "running");
+      if (input) input.disabled = false;
+      return;
+    }
+    setSendButtonMode("send");
     const hasText = input && input.value.trim().length > 0;
     const hasFiles = state.files.length > 0;
-    const canSend = state.loggedIn && !state.running && (hasText || hasFiles);
+    const canSend = state.loggedIn && (hasText || hasFiles);
     if (send) send.disabled = !canSend;
+    if (input) input.disabled = false;
   }
 
   function renderFileChips() {
@@ -329,6 +360,22 @@
     const t = (text || "").trim();
     if (!t) return null;
     let m;
+    if (/^DeepSeek-TUI ·/.test(t)) {
+      return { kind: "step", verb: "DeepSeek-TUI", target: t.replace(/^DeepSeek-TUI ·\s*/, "").trim() || "运行中" };
+    }
+    m = t.match(/^工作区:\s*(.+)$/);
+    if (m) return { kind: "step", verb: "工作区", target: m[1].trim(), muted: true };
+    m = t.match(/^模式:\s*(.+)$/);
+    if (m) return { kind: "step", verb: "模式", target: m[1].trim(), muted: true };
+    m = t.match(/^线程:\s*(.+)$/);
+    if (m) return { kind: "step", verb: "线程", target: m[1].trim(), muted: true };
+    m = t.match(/^回合:\s*(.+)$/);
+    if (m) return { kind: "step", verb: "回合", target: m[1].trim(), muted: true };
+    m = t.match(/^待审批:\s*(.+)$/);
+    if (m) return { kind: "step", verb: "审批", target: m[1].trim() };
+    m = t.match(/^工具:\s*(.+)$/);
+    if (m) return { kind: "step", verb: "工具", target: m[1].trim() };
+    if (/^(已允许|已拒绝)$/.test(t)) return { kind: "step", verb: t, target: "", muted: true };
     m = t.match(/^--- ReAct 第 (\d+) 步 ---$/);
     if (m) return { kind: "section", label: "ReAct 第 " + m[1] + " 步" };
     m = t.match(/^══\s*子 Agent · 步骤 (.+?) ══$/);
@@ -366,8 +413,8 @@
     if (!run?.titleEl) return;
     const sec = Math.max(1, Math.floor((Date.now() - run.thinkStartTime) / 1000));
     run.titleEl.textContent = run.thinkDone
-      ? "已思考（用时 " + sec + " 秒）"
-      : "思考中…（" + sec + " 秒）";
+      ? "已完成（用时 " + sec + " 秒）"
+      : "正努力工作（" + sec + " 秒）";
   }
 
   function fadeThinkSteps(stepsEl) {
@@ -440,7 +487,7 @@
     icon.innerHTML = THINK_ICON_SVG;
     const title = document.createElement("span");
     title.className = "ds-think-title";
-    title.textContent = "思考中…";
+    title.textContent = "正努力工作…";
     const chevron = document.createElement("span");
     chevron.className = "ds-think-chevron";
     chevron.innerHTML =
@@ -510,24 +557,150 @@
     return think;
   }
 
+  const ICON_COPY =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+  const ICON_EDIT =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+
+  async function copyUserMessageText(text, btn) {
+    const value = text || "";
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.style.cssText = "position:fixed;left:-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      if (btn) {
+        const prev = btn.getAttribute("title") || "复制";
+        btn.setAttribute("title", "已复制");
+        btn.classList.add("ds-copied");
+        setTimeout(() => {
+          btn.setAttribute("title", prev);
+          btn.classList.remove("ds-copied");
+        }, 1200);
+      }
+    } catch (_) {
+      alert("复制失败，请手动选择文本复制。");
+    }
+  }
+
+  function removeMessagesFromDom(startRow) {
+    const wrap = $("messages");
+    if (!wrap || !startRow) return;
+    let el = startRow;
+    while (el && el.parentNode === wrap) {
+      const next = el.nextElementSibling;
+      wrap.removeChild(el);
+      el = next;
+    }
+    if (!wrap.children.length) showEmptyState();
+  }
+
+  function beginEditUserMessage(msgIndex, text, row) {
+    if (state.running) return;
+    const session = ensureSession();
+    session.messages = (session.messages || []).slice(0, msgIndex);
+    removeMessagesFromDom(row);
+    const input = $("chat-input");
+    if (input) {
+      input.value = text || "";
+      resizeInput();
+      input.focus();
+    }
+    if (session.messages.length) hideEmptyState();
+    else showEmptyState();
+    persistActiveSession().catch(() => {});
+    updateComposerState();
+  }
+
+  function buildUserMessageRow(text, msgIndex) {
+    const row = document.createElement("div");
+    row.className = "ds-msg-row ds-user";
+    row.dataset.msgIndex = String(msgIndex);
+
+    const col = document.createElement("div");
+    col.className = "ds-msg-user-col";
+
+    const bubble = document.createElement("div");
+    bubble.className = "ds-msg-bubble";
+    bubble.textContent = text;
+
+    const actions = document.createElement("div");
+    actions.className = "ds-msg-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "ds-msg-action-btn";
+    copyBtn.title = "复制";
+    copyBtn.setAttribute("aria-label", "复制");
+    copyBtn.innerHTML = ICON_COPY;
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
+      copyUserMessageText(text, copyBtn);
+    };
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "ds-msg-action-btn";
+    editBtn.title = "编辑";
+    editBtn.setAttribute("aria-label", "编辑");
+    editBtn.innerHTML = ICON_EDIT;
+    editBtn.onclick = (e) => {
+      e.stopPropagation();
+      beginEditUserMessage(msgIndex, text, row);
+    };
+
+    const syncActionState = () => {
+      const disabled = state.running;
+      editBtn.disabled = disabled;
+      editBtn.classList.toggle("ds-disabled", disabled);
+    };
+    syncActionState();
+    row._syncUserActions = syncActionState;
+
+    actions.append(copyBtn, editBtn);
+    col.append(bubble, actions);
+    row.appendChild(col);
+    return row;
+  }
+
+  function appendUserMessage(text, msgIndex) {
+    hideEmptyState();
+    const wrap = $("messages");
+    if (!wrap) return null;
+    const row = buildUserMessageRow(text, msgIndex);
+    wrap.appendChild(row);
+    scrollToBottom();
+    return { row, bubble: row.querySelector(".ds-msg-bubble") };
+  }
+
+  function syncAllUserMessageActions() {
+    $("messages")
+      ?.querySelectorAll(".ds-msg-row.ds-user")
+      .forEach((row) => row._syncUserActions?.());
+  }
+
   function appendMessage(role, text, extra) {
     hideEmptyState();
     const wrap = $("messages");
     if (!wrap) return null;
+
+    if (role === "user") {
+      const idx = state.activeSession?.messages?.length ?? 0;
+      return appendUserMessage(text, idx);
+    }
 
     const row = document.createElement("div");
     row.className = "ds-msg-row ds-" + role;
 
     const bubble = document.createElement("div");
     bubble.className = "ds-msg-bubble";
-
-    if (role === "user") {
-      bubble.textContent = text;
-      row.appendChild(bubble);
-      wrap.appendChild(row);
-      scrollToBottom();
-      return { row, bubble };
-    }
 
     const think = createThinkBlock();
     const answer = document.createElement("div");
@@ -566,51 +739,95 @@
     prepareEmptyChat();
   }
 
+  function normalizeThinkRecord(rec) {
+    if (!rec) return null;
+    return {
+      kind: rec.kind || rec.Kind || "step",
+      text: rec.text ?? rec.Text,
+      label: rec.label ?? rec.Label,
+      verb: rec.verb ?? rec.Verb,
+      target: rec.target ?? rec.Target,
+      error: !!(rec.error ?? rec.Error),
+    };
+  }
+
+  function normalizeSession(raw) {
+    if (!raw) return null;
+    const tuiThreadId = raw.tuiThreadId ?? raw.TuiThreadId ?? null;
+    const thinkOf = (t) => {
+      if (!t) return null;
+      const records = (t.records || t.Records || [])
+        .map(normalizeThinkRecord)
+        .filter(Boolean);
+      return { records, durationSec: t.durationSec ?? t.DurationSec ?? 1 };
+    };
+    const messages = (raw.messages || raw.Messages || []).map((m) => ({
+      role: m.role || m.Role || "user",
+      text: m.text ?? m.Text ?? "",
+      answer: m.answer ?? m.Answer ?? "",
+      think: thinkOf(m.think || m.Think),
+    }));
+    return {
+      id: raw.id || raw.Id,
+      title: raw.title || raw.Title || "新对话",
+      createdAt: raw.createdAt ?? raw.CreatedAt ?? Date.now(),
+      updatedAt: raw.updatedAt ?? raw.UpdatedAt ?? Date.now(),
+      messages,
+      tuiThreadId,
+    };
+  }
+
+  function renderSessionMessages(messages) {
+    $("messages").innerHTML = "";
+    if (!messages?.length) {
+      showEmptyState();
+      return;
+    }
+    hideEmptyState();
+    messages.forEach((m, i) => {
+      if (m.role === "user") {
+        if (m.text) appendUserMessage(m.text, i);
+        return;
+      }
+      if (m.role !== "assistant") return;
+      const wrap = $("messages");
+      if (!wrap) return;
+      const row = document.createElement("div");
+      row.className = "ds-msg-row ds-assistant";
+      const bubble = document.createElement("div");
+      bubble.className = "ds-msg-bubble";
+      if (m.think?.records?.length) restoreThinkBlock(bubble, m.think);
+      const answerText = (m.answer || "").trim();
+      if (answerText) {
+        const answer = document.createElement("div");
+        answer.className = "ds-msg-answer";
+        answer.textContent = answerText;
+        bubble.appendChild(answer);
+      } else if (!m.think?.records?.length) {
+        const answer = document.createElement("div");
+        answer.className = "ds-msg-answer ds-muted";
+        answer.textContent = "（无回复内容）";
+        bubble.appendChild(answer);
+      }
+      row.appendChild(bubble);
+      wrap.appendChild(row);
+    });
+    scrollToBottom();
+  }
+
   async function loadSession(id) {
     if (state.running) return;
+    if (!id) return;
     await persistActiveSession().catch(() => {});
     const res = await postAsync("agentStorageLoad", { id });
-    const s = res.session;
+    const raw = res.session;
+    if (!raw) return;
+    const s = normalizeSession(raw);
     if (!s) return;
     state.activeSessionId = id;
-    state.activeSession = {
-      id: s.id,
-      title: s.title || "新对话",
-      createdAt: s.createdAt || Date.now(),
-      updatedAt: s.updatedAt || Date.now(),
-      messages: s.messages || [],
-    };
+    state.activeSession = s;
     renderSessions();
-    $("messages").innerHTML = "";
-    if (!state.activeSession.messages?.length) {
-      showEmptyState();
-    } else {
-      hideEmptyState();
-      state.activeSession.messages.forEach((m) => {
-        if (m.role === "user") appendMessage("user", m.text);
-        else if (m.role === "assistant") {
-          const row = document.createElement("div");
-          row.className = "ds-msg-row ds-assistant";
-          const bubble = document.createElement("div");
-          bubble.className = "ds-msg-bubble";
-          if (m.think?.records?.length) {
-            restoreThinkBlock(bubble, {
-              records: m.think.records,
-              durationSec: m.think.durationSec || 1,
-            });
-          }
-          if (m.answer) {
-            const answer = document.createElement("div");
-            answer.className = "ds-msg-answer";
-            answer.textContent = m.answer;
-            bubble.appendChild(answer);
-          }
-          row.appendChild(bubble);
-          $("messages")?.appendChild(row);
-        }
-      });
-    }
-    scrollToBottom();
+    renderSessionMessages(s.messages);
   }
 
   function ensureSession() {
@@ -628,8 +845,17 @@
     return state.activeSession;
   }
 
-  function qwenCodeHelpText() {
-    return "DeepSeek Agent + Qwen Code Core（C# 移植）\n/help /clear /react /plan /chat\n/skills [/name]  /agents <name>\n!git status  直接执行 Shell\n@文件 附加工作区\n推理：Chat2API · 工具：Core + MCP + Skills/Subagents";
+  function agentHelpText() {
+    return (
+      "DeepSeek 桌面 Agent（DeepSeek-TUI）\n" +
+      "/help  本帮助\n" +
+      "/clear  清空对话\n" +
+      "/react  Agent 模式（多步工具，Tab 对应官网 Agent）\n" +
+      "/plan   Plan 模式（只读调研，官网 Plan）\n" +
+      "/chat   返回普通对话\n\n" +
+      "推理：本地 Chat2API（须先在网页登录）\n" +
+      "工具 / MCP / Skills：~/.deepseek/"
+    );
   }
 
   async function handleSlashCommand(text) {
@@ -637,7 +863,7 @@
     if (!t.startsWith("/")) return false;
     const cmd = t.split(/\s+/)[0].toLowerCase();
     if (cmd === "/help") {
-      appendMessage("assistant", qwenCodeHelpText(), { status: "Qwen Code 帮助" });
+      appendMessage("assistant", agentHelpText(), { status: "DeepSeek 帮助" });
       return true;
     }
     if (cmd === "/clear") {
@@ -646,12 +872,12 @@
     }
     if (cmd === "/react") {
       state.strategy = "react";
-      appendMessage("assistant", "已切换为 ReAct 单 Agent 模式。", { status: "模式" });
+      appendMessage("assistant", "已切换为 Agent 模式（多步工具，DeepSeek-TUI）。", { status: "模式" });
       return true;
     }
     if (cmd === "/plan") {
       state.strategy = "plan";
-      appendMessage("assistant", "已切换为计划 + 子 Agent 模式。", { status: "模式" });
+      appendMessage("assistant", "已切换为 Plan 模式（只读调研，DeepSeek-TUI）。", { status: "模式" });
       return true;
     }
     if (cmd === "/chat") {
@@ -686,8 +912,9 @@
     session.messages.push({ role: "user", text });
     await persistActiveSession().catch(() => {});
 
-    state.currentRun = appendMessage("assistant", "", { status: "Agent 正在执行（Chat2API + MCP）…" });
+    state.currentRun = appendMessage("assistant", "", { status: "DeepSeek-TUI 正在执行…" });
     state.running = true;
+    syncAllUserMessageActions();
     updateComposerState();
     input.value = "";
     resizeInput();
@@ -697,6 +924,7 @@
     renderFileChips();
 
     post("setWorkMode", { mode: "agent" });
+    state.stopping = false;
     post("agentRun", {
       text: text || (refFileIds.length ? "请阅读附件并完成任务。" : text),
       mode: "专家",
@@ -705,6 +933,8 @@
       smartSearch: true,
       mcpOn: true,
       refFileIds,
+      sessionId: state.activeSessionId,
+      tuiThreadId: state.activeSession?.tuiThreadId || null,
     });
   }
 
@@ -715,8 +945,20 @@
     input.style.height = Math.min(200, Math.max(52, input.scrollHeight)) + "px";
   }
 
+  function cancelRun() {
+    if (!state.running || state.stopping) return;
+    state.stopping = true;
+    updateComposerState();
+    if (state.currentRun?.titleEl) {
+      state.currentRun.titleEl.textContent = "正在停止…";
+    }
+    post("agentStop", {});
+  }
+
   function finishRun(summary, answer) {
     state.running = false;
+    state.stopping = false;
+    syncAllUserMessageActions();
     updateComposerState();
 
     const text = (answer || summary || "任务已结束").trim();
@@ -776,8 +1018,17 @@
 
     if (msg.type === "agentAnswer" && msg.text) {
       if (state.currentRun?.answerEl) {
-        state.currentRun.answerEl.textContent = msg.text;
+        if (msg.append) {
+          state.currentRun.answerEl.textContent += msg.text;
+        } else {
+          state.currentRun.answerEl.textContent = msg.text;
+        }
       }
+    }
+
+    if (msg.type === "agentTuiThread" && msg.tuiThreadId && state.activeSession) {
+      state.activeSession.tuiThreadId = msg.tuiThreadId;
+      persistActiveSession().catch(() => {});
     }
 
     if (msg.type === "agentStarted") {
@@ -790,13 +1041,19 @@
   };
 
   function bindUi() {
-    $("btn-send")?.addEventListener("click", () => dispatchRun());
+    $("btn-send")?.addEventListener("click", () => {
+      if (state.running) cancelRun();
+      else dispatchRun();
+    });
     $("btn-new-chat")?.addEventListener("click", () => startNewChat());
     $("btn-mcp")?.addEventListener("click", () => post("openSettings", {}));
     $("btn-storage-settings")?.addEventListener("click", () => post("openSettings", {}));
-    $("btn-mode-chat")?.addEventListener("click", () => post("setWorkMode", { mode: "chat" }));
-    $("btn-goto-chat")?.addEventListener("click", () => post("setWorkMode", { mode: "chat" }));
-    $("mode-float")?.addEventListener("click", () => post("setWorkMode", { mode: "chat" }));
+    $("mode-float")?.addEventListener("click", () => {
+      post("setWorkMode", { mode: "chat" });
+    });
+    $("brand-home")?.addEventListener("click", (e) => {
+      e.preventDefault();
+    });
     $("btn-login-goto")?.addEventListener("click", () => post("setWorkMode", { mode: "chat" }));
 
     const fileInput = $("file-input");
@@ -856,22 +1113,19 @@
       await migrateLegacyLocalStorage();
       await refreshSessionList();
       if (state.sessionMetas.length) {
-        const first = state.sessionMetas[0];
-        if (first?.id && first.id !== state.activeSessionId) {
-          await loadSession(first.id);
-        } else {
-          renderSessions();
-        }
+        await loadSession(state.sessionMetas[0].id);
+      } else {
+        prepareEmptyChat();
       }
     } catch (e) {
       console.warn("Agent storage init:", e);
+      prepareEmptyChat();
     }
   }
 
   async function init() {
     bindUi();
     resizeInput();
-    prepareEmptyChat();
 
     const banner = $("login-banner");
     if (banner) {
@@ -885,12 +1139,24 @@
     post("refreshLoginState", {});
     flushPendingNativeMessages();
 
-    void bootstrapStorage();
+    await bootstrapStorage();
 
-    setInterval(() => post("refreshLoginState", {}), 8000);
+    const pollLogin = () => post("refreshLoginState", {});
+    setInterval(pollLogin, 3000);
+    [400, 1200, 2500].forEach((ms) => setTimeout(pollLogin, ms));
+
     setTimeout(() => {
-      if (!state.authResolved) post("refreshLoginState", {});
-    }, 1500);
+      if (!state.authResolved) {
+        pollLogin();
+        setTimeout(() => {
+          if (!state.authResolved) setLoggedIn(false);
+        }, 2500);
+      }
+    }, 1200);
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") pollLogin();
+    });
   }
 
   if (document.readyState === "loading") {

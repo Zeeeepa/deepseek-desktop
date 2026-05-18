@@ -21,7 +21,8 @@ public partial class MainWindow : System.Windows.Window
     private bool _webViewReady;
     private bool _isExiting;
     private bool _exitCleanupDone;
-    private WebInjectService? _inject;
+    private DesktopWebHost? _webHost;
+    private WebChatBridgeHost? _apiBridgeHost;
     private LocalOpenAiServer? _localApi;
     private DesktopAgentHost? _agentHost;
     private TrayIconService? _tray;
@@ -71,44 +72,54 @@ public partial class MainWindow : System.Windows.Window
 
             await WebView.EnsureCoreWebView2Async(env);
 
+            _apiBridgeHost = new WebChatBridgeHost(BridgeWebView);
+            await _apiBridgeHost.AttachAndNavigateAsync(env);
+
             var core = WebView.CoreWebView2;
             core.Settings.AreDefaultContextMenusEnabled = true;
             core.Settings.AreDevToolsEnabled = true;
             core.Settings.IsStatusBarEnabled = false;
             core.Settings.IsZoomControlEnabled = true;
 
-            _inject = new WebInjectService(WebView);
-            _localApi = new LocalOpenAiServer(_inject);
-            _agentHost = new DesktopAgentHost(_inject, _localApi);
+            _webHost = new DesktopWebHost(WebView, AgentWebView);
+            _webHost.AttachApiBridge(_apiBridgeHost);
+            _localApi = new LocalOpenAiServer(_webHost.Chat);
+            _agentHost = new DesktopAgentHost(_webHost, _localApi);
             _agentHost.SetOwner(this);
             _agentHost.NavigateToUrl = NavigateWebAsync;
             _agentHost.Start();
 
-            await _inject.AttachAsync(core);
+            var savedConfig = ConfigStore.Load();
+            if (!string.IsNullOrWhiteSpace(savedConfig.WebUserToken))
+                await _apiBridgeHost.SyncWebUserTokenAsync(savedConfig.WebUserToken);
+
+            var config = ConfigStore.Load();
+            await _webHost.InitializeAsync(env, config.DefaultWorkMode);
 
             core.NewWindowRequested += OnNewWindowRequested;
-            core.NavigationStarting += OnNavigationStarting;
-            core.NavigationCompleted += OnNavigationCompleted;
+            core.NavigationStarting += OnChatNavigationStarting;
+            core.NavigationCompleted += OnChatNavigationCompleted;
             core.HistoryChanged += OnSpaNavigation;
             core.SourceChanged += OnSpaNavigation;
             core.DocumentTitleChanged += OnDocumentTitleChanged;
 
+            var agentCore = AgentWebView.CoreWebView2;
+            if (agentCore is not null)
+            {
+                agentCore.NavigationCompleted += OnAgentNavigationCompleted;
+                agentCore.DocumentTitleChanged += OnDocumentTitleChanged;
+            }
+
             _webViewReady = true;
             LoadingOverlay.Visibility = Visibility.Collapsed;
-            var config = ConfigStore.Load();
-            var startUrl = config.DefaultWorkMode is "agent" or "plan"
-                ? AgentPageUrl
-                : DeepSeekUrl;
-            core.Navigate(startUrl);
         }
         catch (Exception ex)
         {
             LoadingOverlay.Visibility = Visibility.Collapsed;
-            System.Windows.MessageBox.Show(
+            Views.DsMessageDialog.Warning(
+                this,
                 $"无法初始化 Edge 内核 (WebView2)。\n\n{ex.Message}\n\n请安装 Microsoft Edge WebView2 运行时：\nhttps://developer.microsoft.com/microsoft-edge/webview2/",
-                "DeepSeek",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+                "DeepSeek");
             _isExiting = true;
             Close();
         }
@@ -203,72 +214,67 @@ public partial class MainWindow : System.Windows.Window
         OpenExternal(e.Uri);
     }
 
-    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    private void OnChatNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
         _injectBurstCts?.Cancel();
         if (e.Uri.Contains("chat.deepseek.com", StringComparison.OrdinalIgnoreCase))
             LoadingOverlay.Visibility = Visibility.Visible;
     }
 
-    private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    private async void OnChatNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
         LoadingOverlay.Visibility = Visibility.Collapsed;
 
-        if (!e.IsSuccess && WebView.CoreWebView2 != null)
+        if (!e.IsSuccess && WebView.CoreWebView2 is not null)
         {
             Title = "DeepSeek - 加载失败";
             return;
         }
 
-        if (_inject is not null && !_inject.IsAgentHostPage)
+        if (_webHost is { IsAgentVisible: false })
         {
             if (_agentHost is not null)
                 await _agentHost.OnChatNavigationCompletedAsync();
             ScheduleInjectBurst(forceReset: false);
         }
-        else if (_agentHost is not null)
+    }
+
+    private async void OnAgentNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (!e.IsSuccess || _agentHost is null) return;
+        if (_webHost is { IsAgentVisible: true })
             await _agentHost.OnAgentNavigationCompletedAsync();
     }
 
     private async Task NavigateWebAsync(string url)
     {
-        if (!_webViewReady || WebView.CoreWebView2 is null) return;
-        var current = WebView.CoreWebView2.Source ?? "";
-        if (AppNavigation.IsAgentPage(url) && AppNavigation.IsAgentPage(current))
-            return;
-        if (url.StartsWith("https://chat.deepseek.com", StringComparison.OrdinalIgnoreCase) &&
-            current.StartsWith("https://chat.deepseek.com", StringComparison.OrdinalIgnoreCase))
-            return;
+        if (!_webViewReady || _webHost is null) return;
 
-        if (AppNavigation.IsAgentPage(url)
-            && current.Contains("chat.deepseek.com", StringComparison.OrdinalIgnoreCase)
-            && _agentHost is not null)
+        if (AppNavigation.IsAgentPage(url))
         {
-            await NavigateToAgentAfterTokenSyncAsync(url);
+            if (_agentHost is not null)
+                await _agentHost.SyncTokenFromChatPageAsync();
+            await _webHost.SwitchToUrlAsync(url);
+            if (_agentHost is not null)
+                await _agentHost.OnAgentNavigationCompletedAsync();
             return;
         }
 
-        WebView.CoreWebView2.Navigate(url);
-    }
-
-    private async Task NavigateToAgentAfterTokenSyncAsync(string url)
-    {
-        if (_agentHost is not null)
-            await _agentHost.SyncTokenFromChatPageAsync();
-        if (WebView.CoreWebView2 is null) return;
-        WebView.CoreWebView2.Navigate(url);
+        await _webHost.SwitchToUrlAsync(url);
+        if (_webHost is { IsAgentVisible: false })
+            await _webHost.TriggerChatInjectAsync(forceReset: false);
     }
 
     private void OnSpaNavigation(object? sender, object e)
     {
-        if (_inject is not null && _inject.IsAgentHostPage)
+        if (_webHost is { IsAgentVisible: true })
             return;
         ScheduleInjectBurst(forceReset: false);
     }
 
     private void ScheduleInjectBurst(bool forceReset)
     {
-        if (_inject is null || !_webViewReady) return;
+        if (_webHost is null || !_webViewReady) return;
 
         _injectBurstCts?.Cancel();
         _injectBurstCts?.Dispose();
@@ -283,8 +289,8 @@ public partial class MainWindow : System.Windows.Window
                 await Task.Delay(120, ct);
                 await Dispatcher.InvokeAsync(async () =>
                 {
-                    if (_inject is not null && !ct.IsCancellationRequested)
-                        await _inject.BurstInjectAsync(ct, reset);
+                    if (_webHost is not null && !ct.IsCancellationRequested)
+                        await _webHost.BurstChatInjectAsync(ct, reset);
                 });
             }
             catch (OperationCanceledException)
@@ -296,7 +302,13 @@ public partial class MainWindow : System.Windows.Window
 
     private void OnDocumentTitleChanged(object? sender, object e)
     {
-        var title = WebView.CoreWebView2?.DocumentTitle?.Trim();
+        var core = sender as CoreWebView2 ?? WebView.CoreWebView2;
+        if (_webHost is { IsAgentVisible: true } && core != AgentWebView.CoreWebView2)
+            return;
+        if (_webHost is { IsAgentVisible: false } && core != WebView.CoreWebView2)
+            return;
+
+        var title = core?.DocumentTitle?.Trim();
         if (string.IsNullOrWhiteSpace(title))
             Title = "DeepSeek";
         else if (title.Contains("Agent", StringComparison.OrdinalIgnoreCase))

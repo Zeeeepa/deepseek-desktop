@@ -21,6 +21,7 @@
 
   function getUserToken() {
     try {
+      if (window.__dsWebUserToken) return String(window.__dsWebUserToken);
       return localStorage.getItem("userToken") || "";
     } catch {
       return "";
@@ -321,20 +322,88 @@
     return String(fileId);
   }
 
-  function parseStreamText(reader) {
+  function cleanStreamPiece(text) {
+    if (!text) return "";
+    let c = String(text).replace(/FINISHED/g, "");
+    return c.replace(/^(SEARCH|WEB_SEARCH|SEARCHING)\s*/i, "");
+  }
+
+  function postBridgeStream(streamId, payload) {
+    if (!streamId) return;
+    try {
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(
+          JSON.stringify({ channel: "bridge_stream", streamId, ...payload })
+        );
+      }
+    } catch (_) {}
+  }
+
+  function applyStreamParsed(parsed, state, onDelta) {
+    if (parsed.v && typeof parsed.v === "object" && parsed.v.response) {
+      state.currentPath = parsed.v.response.thinking_enabled ? "thinking" : "content";
+      const fragments = parsed.v.response.fragments;
+      if (Array.isArray(fragments)) {
+        for (const f of fragments) {
+          if (!f.content) continue;
+          const c = cleanStreamPiece(f.content);
+          if (!c) continue;
+          if (f.type === "THINK") {
+            state.accumulatedThinking += c;
+            if (onDelta) onDelta("reasoning", c);
+          } else if (f.type === "ANSWER" || f.type === "RESPONSE") {
+            state.accumulatedContent += c;
+            if (onDelta) onDelta("content", c);
+          }
+        }
+      }
+    } else if (parsed.p === "response/fragments" && Array.isArray(parsed.v)) {
+      for (const f of parsed.v) {
+        if (!f.content) continue;
+        const c = cleanStreamPiece(f.content);
+        if (!c) continue;
+        if (f.type === "THINK") {
+          state.currentPath = "thinking";
+          state.accumulatedThinking += c;
+          if (onDelta) onDelta("reasoning", c);
+        } else if (f.type === "ANSWER" || f.type === "RESPONSE") {
+          state.currentPath = "content";
+          state.accumulatedContent += c;
+          if (onDelta) onDelta("content", c);
+        }
+      }
+    } else if (typeof parsed.v === "string") {
+      const c = cleanStreamPiece(parsed.v);
+      if (!c) return;
+      if (state.currentPath === "thinking") {
+        state.accumulatedThinking += c;
+        if (onDelta) onDelta("reasoning", c);
+      } else {
+        state.accumulatedContent += c;
+        if (onDelta) onDelta("content", c);
+      }
+    }
+  }
+
+  function parseStreamText(reader, onDelta) {
     return new Promise((resolve, reject) => {
       const dec = new TextDecoder();
       let buf = "";
-      let accumulatedContent = "";
-      let accumulatedThinking = "";
-      let currentPath = "";
+      const state = {
+        accumulatedContent: "",
+        accumulatedThinking: "",
+        currentPath: "",
+      };
 
       function pump() {
         reader
           .read()
           .then(({ done, value }) => {
             if (done) {
-              resolve({ content: accumulatedContent, thinking: accumulatedThinking });
+              resolve({
+                content: state.accumulatedContent,
+                thinking: state.accumulatedThinking,
+              });
               return;
             }
             buf += dec.decode(value, { stream: true });
@@ -346,38 +415,7 @@
               const data = line.slice(5).trim();
               if (!data || data === "[DONE]") continue;
               try {
-                const parsed = JSON.parse(data);
-                if (parsed.v && typeof parsed.v === "object" && parsed.v.response) {
-                  currentPath = parsed.v.response.thinking_enabled ? "thinking" : "content";
-                  const fragments = parsed.v.response.fragments;
-                  if (Array.isArray(fragments)) {
-                    for (const f of fragments) {
-                      if (!f.content) continue;
-                      let c = f.content.replace(/FINISHED/g, "");
-                      c = c.replace(/^(SEARCH|WEB_SEARCH|SEARCHING)\s*/i, "");
-                      if (f.type === "THINK") accumulatedThinking += c;
-                      else if (f.type === "ANSWER" || f.type === "RESPONSE") accumulatedContent += c;
-                    }
-                  }
-                } else if (parsed.p === "response/fragments" && Array.isArray(parsed.v)) {
-                  for (const f of parsed.v) {
-                    if (!f.content) continue;
-                    let c = f.content.replace(/FINISHED/g, "");
-                    c = c.replace(/^(SEARCH|WEB_SEARCH|SEARCHING)\s*/i, "");
-                    if (f.type === "THINK") {
-                      currentPath = "thinking";
-                      accumulatedThinking += c;
-                    } else if (f.type === "ANSWER" || f.type === "RESPONSE") {
-                      currentPath = "content";
-                      accumulatedContent += c;
-                    }
-                  }
-                } else if (typeof parsed.v === "string") {
-                  let c = parsed.v.replace(/FINISHED/g, "");
-                  c = c.replace(/^(SEARCH|WEB_SEARCH|SEARCHING)\s*/i, "");
-                  if (currentPath === "thinking") accumulatedThinking += c;
-                  else accumulatedContent += c;
-                }
+                applyStreamParsed(JSON.parse(data), state, onDelta);
               } catch (_) {}
             }
             pump();
@@ -416,9 +454,12 @@
     return { content: clean.trim(), toolCalls };
   }
 
-  async function webChatCompletion(messages, model, opts) {
+  async function fetchWebCompletion(messages, model, opts) {
     const accessToken = await acquireToken();
-    const sessionId = await createSession(accessToken);
+    const sessionId =
+      opts && opts.chatSessionId
+        ? String(opts.chatSessionId)
+        : await createSession(accessToken);
     const challenge = await getChallenge(accessToken);
     const pow = await calculateChallengeAnswer(challenge);
     const prompt = messagesToPrompt(messages);
@@ -452,7 +493,10 @@
       throw new Error("网页 API 失败 " + r.status + ": " + t.slice(0, 300));
     }
 
-    const { content, thinking } = await parseStreamText(r.body.getReader());
+    return { response: r, sessionId, model: model || "deepseek-chat" };
+  }
+
+  function buildChatResult(content, thinking, sessionId, model) {
     const parsed = parseToolCalls(content);
     const textOut = parsed.toolCalls.length ? null : parsed.content || "(无回复)";
     const likelyTruncated = detectLikelyTruncated(textOut);
@@ -461,9 +505,27 @@
       reasoning_content: thinking || undefined,
       tool_calls: parsed.toolCalls.length ? parsed.toolCalls : undefined,
       model: model || "deepseek-chat",
-      finish_reason: likelyTruncated ? "length" : "stop",
+      finish_reason: likelyTruncated ? "length" : parsed.toolCalls.length ? "tool_calls" : "stop",
       is_likely_truncated: likelyTruncated,
+      chat_session_id: sessionId,
     };
+  }
+
+  async function webChatCompletion(messages, model, opts) {
+    const { response, sessionId, model: m } = await fetchWebCompletion(messages, model, opts);
+    const { content, thinking } = await parseStreamText(response.body.getReader());
+    return buildChatResult(content, thinking, sessionId, m);
+  }
+
+  async function webChatCompletionStreaming(streamId, messages, model, opts) {
+    const { response, sessionId, model: m } = await fetchWebCompletion(messages, model, opts);
+    const onDelta = (kind, text) => {
+      postBridgeStream(streamId, { type: "delta", kind, text });
+    };
+    const { content, thinking } = await parseStreamText(response.body.getReader(), onDelta);
+    const result = buildChatResult(content, thinking, sessionId, m);
+    postBridgeStream(streamId, { type: "done", result });
+    return result;
   }
 
   window.dsDesktopBridge = {
@@ -477,6 +539,17 @@
         const msg =
           (e && (e.message || e.stack) && String(e.message || e.stack)) ||
           (typeof e === "string" ? e : JSON.stringify(e));
+        throw new Error(msg || "网页 Chat API 调用失败");
+      }
+    },
+    webChatCompletionStreaming: async function (streamId, ...args) {
+      try {
+        return await webChatCompletionStreaming(streamId, ...args);
+      } catch (e) {
+        const msg =
+          (e && (e.message || e.stack) && String(e.message || e.stack)) ||
+          (typeof e === "string" ? e : JSON.stringify(e));
+        postBridgeStream(streamId, { type: "error", message: msg || "网页 Chat API 调用失败" });
         throw new Error(msg || "网页 Chat API 调用失败");
       }
     },

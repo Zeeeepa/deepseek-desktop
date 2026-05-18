@@ -1,56 +1,73 @@
+using System.Text.Json.Serialization;
+
 namespace DeepSeekBrowser.Models;
 
 public sealed class AppConfig
 {
     public string DeepSeekApiKey { get; set; } = "";
     public string WebUserToken { get; set; } = "";
-    public string Model { get; set; } = "deepseek-chat";
+    public string Model { get; set; } = "DeepSeek-V3.2";
     public string ApiBaseUrl { get; set; } = "https://api.deepseek.com";
     public string WebApiBaseUrl { get; set; } = "https://chat.deepseek.com/api";
     public int LocalApiPort { get; set; } = 5111;
+
+    /// <summary>启用后，外部调用本地 Chat2API 须携带 Bearer / X-API-Key（本机 127.0.0.1 内置 Agent 免认证）。</summary>
+    public bool EnableLocalApiKeyAuth { get; set; }
+
+    /// <summary>本地 OpenAI 兼容 API 的访问密钥列表。</summary>
+    public List<LocalApiKey> LocalApiKeys { get; set; } = new();
+
+    /// <summary>Chat2API 会话模式：single（单轮，默认）| multi（多轮，需 session_id）。</summary>
+    public string Chat2ApiSessionMode { get; set; } = "single";
+
+    public int Chat2ApiSessionTimeoutMinutes { get; set; } = 30;
+
+    public int Chat2ApiMaxMessagesPerSession { get; set; } = 100;
+
+    /// <summary>模型映射（对齐 chat2api-doc 模型映射）。</summary>
+    public List<ModelMappingEntry> ModelMappings { get; set; } = new();
+
     public bool PreferWebSessionForApi { get; set; } = true;
     public int MaxAgentSteps { get; set; } = 25;
-    /// <summary>chat = 网页对话；agent / plan = 本地 Chat2API + MCP 智能体</summary>
+    /// <summary>chat = 网页对话；agent / plan = DeepSeek-TUI + Chat2API</summary>
     public string DefaultWorkMode { get; set; } = "chat";
-    /// <summary>react = 单 Agent ReAct；plan = 规划 + 子 Agent（Qwen react_demo 风格）</summary>
+    /// <summary>react = Agent；plan = Plan（只读调研）</summary>
     public string DefaultAgentStrategy { get; set; } = "react";
     public bool EnableSubAgents { get; set; } = true;
     public int MaxSubAgentSteps { get; set; } = 10;
 
-    /// <summary>发现并使用 .qwen/skills 与 bundled Skills（官方 Skills）。</summary>
-    public bool EnableQwenSkills { get; set; } = true;
+    /// <summary>DeepSeek-TUI 运行时 HTTP 端口（<c>deepseek serve --http</c>）。</summary>
+    public int DeepSeekTuiRuntimePort { get; set; } = 7878;
 
-    /// <summary>包含 npm @qwen-code/qwen-code/bundled 内置 Skills（review、qc-helper 等）。</summary>
-    public bool EnableQwenBundledSkills { get; set; } = true;
+    /// <summary>可选：<c>deepseek.exe</c> 或 <c>deepseek.cmd</c> 完整路径；留空则自动探测。</summary>
+    public string DeepSeekTuiExecutablePath { get; set; } = "";
 
-    /// <summary>发现 .qwen/agents 命名 Subagent 配置。</summary>
-    public bool EnableQwenSubAgentConfigs { get; set; } = true;
+    /// <summary>
+    /// 本地 DeepSeek-TUI 源码根目录（含 Cargo.toml / crates/tui）。
+    /// 留空则尝试 Desktop\DSD\DeepSeek-TUI-main；build.ps1 -UseLocalTui 会从该目录 cargo build。
+    /// </summary>
+    public string DeepSeekTuiSourcePath { get; set; } =
+        @"C:\Users\xiaow\Desktop\DSD\DeepSeek-TUI-main\DeepSeek-TUI-main";
 
-    /// <summary>启用 Qwen Code Core 内置工具（C# 移植，见 Services/QwenCode）。</summary>
-    public bool EnableQwenCodeBuiltinTools { get; set; } = true;
+    /// <summary>DeepSeek-TUI <c>serve --http</c> 的 Bearer Token；留空则自动生成并持久化。</summary>
+    public string DeepSeekTuiRuntimeToken { get; set; } = "";
 
-    /// <summary>工作区根目录；Agent 内置文件/Shell 工具限制在此目录下。</summary>
-    public string QwenCodeWorkspaceRoot { get; set; } = "";
+    /// <summary>工作区根目录；DeepSeek-TUI 工具限制在此目录下。</summary>
+    [JsonPropertyName("qwenCodeWorkspaceRoot")]
+    public string AgentWorkspaceRoot { get; set; } = "";
 
-    /// <summary>审批模式：smart=只读自动、写/Shell 需确认；readonly=仅只读自动；always=全部确认；never=全部自动（不安全）。</summary>
-    public string QwenCodeApprovalMode { get; set; } = "smart";
+    /// <summary>审批模式：smart | readonly | always | never（同步到 ~/.deepseek/config.toml）。</summary>
+    [JsonPropertyName("qwenCodeApprovalMode")]
+    public string AgentApprovalMode { get; set; } = "smart";
 
-    public bool QwenCodeAutoApproveReadOnly { get; set; } = true;
+    [JsonPropertyName("qwenCodeAutoApproveReadOnly")]
+    public bool AgentAutoApproveReadOnly { get; set; } = true;
 
-    public bool QwenCodeAllowShell { get; set; } = true;
+    [JsonPropertyName("qwenCodeAllowShell")]
+    public bool AgentAllowShell { get; set; } = true;
 
-    /// <summary>允许内置 web_fetch（只读拉取 URL 文本）。</summary>
-    public bool EnableQwenCodeWebFetch { get; set; } = true;
-
-    public int QwenCodeMaxFileReadChars { get; set; } = 120_000;
-
-    public int QwenCodeMaxShellOutputChars { get; set; } = 32_000;
-
-    /// <summary>启用 Qwen Code 自适应输出续写（截断时多轮恢复，见官方设计文档）。</summary>
+    /// <summary>网页对话输出截断时自动续写。</summary>
     public bool EnableAdaptiveOutputEscalation { get; set; } = true;
-
-    /// <summary>0 = 使用默认 8K 上限；&gt;0 时作为 max_tokens 且不参与自动扩容（预留）。</summary>
-    public int QwenCodeMaxOutputTokens { get; set; }
 
     /// <summary>Agent 对话保留天数，0 = 不按时间自动删除。</summary>
     public int AgentSessionRetentionDays { get; set; } = 30;

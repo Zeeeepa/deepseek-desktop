@@ -395,9 +395,11 @@
       if (token) payload.token = token;
     }
     post("setWorkMode", payload);
+    navigateForWorkMode(workMode);
     syncWorkModeUi();
-    if (notify && !goingAgent) {
-      showToast("普通对话", ["已打开官网对话页"]);
+    if (notify) {
+      if (goingAgent) showToast("Agent", ["已打开 Agent 工作台"]);
+      else showToast("普通对话", ["已打开官网对话页"]);
     }
   }
 
@@ -867,6 +869,20 @@
     setTimeout(function () { toast.remove(); }, 5000);
   }
 
+  function copyText(text) {
+    if (!text) return;
+    try {
+      navigator.clipboard.writeText(text);
+    } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+  }
+
   function showProviderCard(info) {
     ensureStyles();
     document.getElementById("ds-provider-mask")?.remove();
@@ -881,24 +897,56 @@
     titleRow.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:12px";
     const h3 = document.createElement("div");
     h3.style.cssText = "font-size:16px;font-weight:600;color:#111827";
-    h3.textContent = "DeepSeek · Chat2API";
+    h3.textContent = "DeepSeek";
     const dot = document.createElement("span");
     dot.style.cssText =
       "width:10px;height:10px;border-radius:50%;background:" + (info.loggedIn ? "#22c55e" : "#ef4444");
     titleRow.append(h3, dot);
     const desc = document.createElement("div");
     desc.style.cssText = "font-size:13px;color:#6b7280;line-height:1.5;margin-bottom:12px";
-    desc.textContent = "网页 Token → 本地 Chat2API。Agent 模式通过 MCP 多步完成本机/Unity 等任务。";
+    desc.textContent =
+      "经本地 Chat2API 使用网页会话；Agent 由 DeepSeek-TUI 驱动（deepseek-v4-pro 等官方模型 ID）。";
     const stats = document.createElement("div");
     stats.style.cssText = "font-size:12px;color:#374151;margin-bottom:12px;line-height:1.8";
     stats.textContent =
-      "账户: " + (info.loggedIn ? "1/1 在线" : "未登录") + "  |  认证: User Token  |  API: " + (info.loggedIn ? "已启用" : "未就绪");
-    const apiBox = document.createElement("div");
-    apiBox.style.cssText =
-      "background:#f7f8fa;border-radius:10px;padding:10px;font-size:12px;color:#4d6bfe;word-break:break-all;margin-bottom:14px";
-    apiBox.textContent = info.url || apiUrl;
+      "账户: " +
+      (info.loggedIn ? "1/1 在线" : "未登录") +
+      "  |  模型: " +
+      (info.modelCount != null ? info.modelCount : "—") +
+      "  |  认证: User Token";
+    const baseUrl = info.url || apiUrl;
+    const apiKey = info.apiKey || "";
+    const masked = info.apiKeyMasked || (apiKey ? apiKey.slice(0, 8) + "…" : "—");
+    function fieldRow(label, value, copyVal) {
+      const row = document.createElement("div");
+      row.style.cssText = "margin-bottom:10px";
+      const lab = document.createElement("div");
+      lab.style.cssText = "font-size:11px;color:#9ca3af;margin-bottom:4px";
+      lab.textContent = label;
+      const box = document.createElement("div");
+      box.style.cssText = "display:flex;gap:8px;align-items:center";
+      const val = document.createElement("div");
+      val.style.cssText =
+        "flex:1;background:#f7f8fa;border-radius:10px;padding:8px 10px;font-size:12px;color:#4d6bfe;word-break:break-all";
+      val.textContent = value;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "复制";
+      btn.style.cssText =
+        "padding:6px 12px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;font-size:12px";
+      btn.onclick = function () {
+        copyText(copyVal || value);
+      };
+      box.append(val, btn);
+      row.append(lab, box);
+      return row;
+    }
     const actions = document.createElement("div");
-    actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px";
+    actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:12px";
+    const btnApi = document.createElement("button");
+    btnApi.type = "button";
+    btnApi.textContent = "API 管理";
+    btnApi.style.cssText = "padding:8px 14px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;font-size:13px";
     const btnSettings = document.createElement("button");
     btnSettings.type = "button";
     btnSettings.textContent = "MCP 设置";
@@ -908,13 +956,22 @@
     btnClose.textContent = "确定";
     btnClose.style.cssText =
       "padding:8px 14px;border-radius:10px;border:none;background:#4d6bfe;color:#fff;cursor:pointer;font-size:13px";
-    actions.append(btnSettings, btnClose);
-    card.append(titleRow, desc, stats, apiBox, actions);
+    actions.append(btnApi, btnSettings, btnClose);
+    card.append(
+      titleRow,
+      desc,
+      stats,
+      fieldRow("Chat2API Base URL", baseUrl, baseUrl),
+      fieldRow("API Key", masked, apiKey)
+    );
+    if (info.tuiRuntimeUrl) card.append(fieldRow("DeepSeek-TUI", info.tuiRuntimeUrl, info.tuiRuntimeUrl));
+    card.append(actions);
     mask.appendChild(card);
     appendToBody(mask);
     mask.addEventListener("click", function (e) { if (e.target === mask) mask.remove(); });
     btnClose.onclick = function () { mask.remove(); };
     btnSettings.onclick = function () { mask.remove(); post("openSettings", {}); };
+    btnApi.onclick = function () { mask.remove(); post("openChat2Api", {}); };
   }
 
   function updateApiDot() {
@@ -1218,7 +1275,14 @@
       }
     }
     if (msg.type === "showProviderCard" && !nativeOnly) {
-      showProviderCard({ url: apiUrl, loggedIn: msg.loggedIn !== false && updateApiDot() });
+      showProviderCard({
+        url: msg.url || apiUrl,
+        apiKey: msg.apiKey,
+        apiKeyMasked: msg.apiKeyMasked,
+        modelCount: msg.modelCount,
+        tuiRuntimeUrl: msg.tuiRuntimeUrl,
+        loggedIn: msg.loggedIn !== false && updateApiDot()
+      });
     }
     if (msg.type === "reinject") scheduleBurstInject(false);
   };

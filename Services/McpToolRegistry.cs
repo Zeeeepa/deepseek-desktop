@@ -1,4 +1,5 @@
 using System.Text;
+using DeepSeekBrowser.Models;
 
 namespace DeepSeekBrowser.Services;
 

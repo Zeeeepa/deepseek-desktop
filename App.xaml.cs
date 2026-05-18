@@ -48,11 +48,10 @@ public partial class App : System.Windows.Application
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         LogCrash(e.Exception);
-        MessageBox.Show(
+        Views.DsMessageDialog.Warning(
+            null,
             $"DeepSeek 启动或运行出错：\n\n{e.Exception.Message}",
-            "DeepSeek",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
+            "DeepSeek");
         e.Handled = true;
         Shutdown(-1);
     }

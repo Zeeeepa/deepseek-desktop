@@ -1,0 +1,250 @@
+<Window x:Class="DeepSeekBrowser.Views.Chat2ApiManagementWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DeepSeek 本地 API"
+        Height="700" Width="840"
+        MinHeight="520" MinWidth="720"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource DsWindow}">
+  <DockPanel Margin="{StaticResource DsDialogMargin}" LastChildFill="True">
+
+    <Border DockPanel.Dock="Bottom" Style="{StaticResource DsDialogFooter}">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button Content="官方文档" Click="OpenDocs_Click" Style="{StaticResource DsGhostButton}" MinWidth="88" Margin="0,0,10,0"/>
+        <Button Content="保存" Click="Save_Click" Style="{StaticResource DsPrimaryButton}" MinWidth="88" Margin="0,0,10,0"/>
+        <Button Content="关闭" Click="Close_Click" Style="{StaticResource DsGhostButton}" MinWidth="72"/>
+      </StackPanel>
+    </Border>
+
+    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+      <TextBlock Text="本地 API" Style="{StaticResource DsPageTitle}"/>
+      <TextBlock x:Name="ApiUrlText" Style="{StaticResource DsPageSubtitle}"/>
+    </StackPanel>
+
+    <TabControl Style="{StaticResource DsTabControl}">
+      <TabItem Header="供应商" MinWidth="88">
+        <ScrollViewer Style="{StaticResource DsScrollViewer}" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock Text="供应商管理" Style="{StaticResource DsPageTitle}" FontSize="18"/>
+            <TextBlock Text="管理 API 供应商配置；登录网页后自动同步 User Token 并启动 Chat2API / DeepSeek-TUI"
+                       Style="{StaticResource DsHint}" Margin="0,6,0,16" TextWrapping="Wrap"/>
+            <TextBlock x:Name="ProviderStatsText" Style="{StaticResource DsBody}" Margin="0,0,0,14"
+                       Foreground="{StaticResource DsMuted}"/>
+
+            <Border Background="#FFFFFF" BorderBrush="{StaticResource DsBorder}" BorderThickness="1"
+                    CornerRadius="12" Padding="18" Margin="0,0,0,16">
+              <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                  <TextBlock Text="DeepSeek" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                  <Border Background="#F3F4F6" CornerRadius="6" Padding="8,2" Margin="10,0,0,0">
+                    <TextBlock Text="内置" FontSize="11" Foreground="{StaticResource DsMuted}"/>
+                  </Border>
+                  <Ellipse x:Name="ProviderOnlineDot" Width="8" Height="8" Fill="#EF4444" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                  <TextBlock x:Name="ProviderOnlineText" Text="离线" Margin="6,0,0,0" VerticalAlignment="Center"
+                             Foreground="{StaticResource DsMuted}" FontSize="12"/>
+                </StackPanel>
+                <TextBlock Text="DeepSeek 智能对话助手，经本地 Chat2API 使用网页登录会话，支持深度思考与联网搜索"
+                           TextWrapping="Wrap" Style="{StaticResource DsHint}" Margin="0,0,0,14"/>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="账户" VerticalAlignment="Center" Foreground="{StaticResource DsMuted}"/>
+                  <TextBlock x:Name="ProviderAccountText" Grid.Column="1" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="模型" VerticalAlignment="Center" Foreground="{StaticResource DsMuted}"/>
+                  <TextBlock x:Name="ProviderModelCountText" Grid.Column="1" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Margin="0,0,0,16">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="认证方式" VerticalAlignment="Center" Foreground="{StaticResource DsMuted}"/>
+                  <TextBlock x:Name="ProviderAuthText" Grid.Column="1" Text="User Token" VerticalAlignment="Center"/>
+                </Grid>
+
+                <TextBlock Text="Chat2API（供 DeepSeek-TUI / OpenAI 客户端）" Style="{StaticResource DsSectionTitle}" Margin="0,0,0,8"/>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBox x:Name="ProviderBaseUrlBox" IsReadOnly="True" Style="{StaticResource DsTextBox}" MinHeight="36"/>
+                  <Button Grid.Column="1" Content="复制 URL" Click="CopyBaseUrl_Click" Style="{StaticResource DsGhostButton}"
+                          Margin="8,0,0,0" MinHeight="36" Padding="12,0"/>
+                </Grid>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <PasswordBox x:Name="ProviderApiKeyBox" Style="{StaticResource DsPasswordBox}" MinHeight="36"/>
+                  <Button Grid.Column="1" Content="复制 Key" Click="CopyApiKey_Click" Style="{StaticResource DsGhostButton}"
+                          Margin="8,0,0,0" MinHeight="36" Padding="12,0"/>
+                </Grid>
+
+                <TextBlock Text="DeepSeek-TUI 运行时" Style="{StaticResource DsSectionTitle}" Margin="0,12,0,8"/>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBox x:Name="ProviderTuiUrlBox" IsReadOnly="True" Style="{StaticResource DsTextBox}" MinHeight="36"/>
+                  <Button Grid.Column="1" Content="复制" Click="CopyTuiUrl_Click" Style="{StaticResource DsGhostButton}"
+                          Margin="8,0,0,0" MinHeight="36" Padding="12,0"/>
+                </Grid>
+                <TextBlock x:Name="ProviderIntegrationHint" Style="{StaticResource DsHint}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+              </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal">
+              <Button Content="刷新状态" Click="RefreshProvider_Click" Style="{StaticResource DsGhostButton}" MinHeight="36" Padding="14,0" Margin="0,0,8,0"/>
+              <Button Content="打开集成 JSON" Click="OpenIntegrationFile_Click" Style="{StaticResource DsGhostButton}" MinHeight="36" Padding="14,0" Margin="0,0,8,0"/>
+              <Button Content="DeepSeek-TUI 文档" Click="OpenTuiDocs_Click" Style="{StaticResource DsGhostButton}" MinHeight="36" Padding="14,0"/>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="模型" MinWidth="72" ToolTipService.ToolTip="DeepSeek 模型映射">
+        <DockPanel LastChildFill="True">
+          <Grid DockPanel.Dock="Bottom" Margin="0,16,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+              <Button Content="+ 添加模型" Click="AddMapping_Click" Style="{StaticResource DsGhostButton}"
+                      MinHeight="36" Padding="14,0" Margin="0,0,8,0"/>
+              <Button Click="ResetMappings_Click" Style="{StaticResource DsGhostButton}" MinHeight="36" Padding="14,0">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="↺" FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                  <TextBlock Text="恢复默认" VerticalAlignment="Center"/>
+                </StackPanel>
+              </Button>
+            </StackPanel>
+            <Button Content="取消" Click="Close_Click" Style="{StaticResource DsGhostButton}"
+                    HorizontalAlignment="Right" MinHeight="36" MinWidth="72"/>
+          </Grid>
+
+          <Border DockPanel.Dock="Bottom" Style="{StaticResource DsWarningBanner}">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="⚠" FontSize="14" Margin="0,0,10,0" VerticalAlignment="Top" Foreground="#D97706"/>
+              <TextBlock TextWrapping="Wrap" Style="{StaticResource DsBody}" LineHeight="20" Foreground="{StaticResource DsText}">
+                客户端填写的模型 ID 需与
+                <Hyperlink RequestNavigate="OpenOfficialDocs_Click" Foreground="{StaticResource DsBlue}">DeepSeek 官方 API 文档</Hyperlink>
+                或网页端模型名一致；填写错误将导致对话失败。本地 API 将官方 ID（如 deepseek-v4-pro）映射到网页实际模型。
+              </TextBlock>
+            </StackPanel>
+          </Border>
+
+          <Grid>
+            <Border x:Name="MappingsEmptyPanel" Style="{StaticResource DsEmptyPanel}">
+              <TextBlock Text="暂无模型" FontSize="14" Foreground="{StaticResource DsCaptionBrush}"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <DataGrid x:Name="MappingsGrid" Style="{StaticResource DsDataGrid}"
+                      AutoGenerateColumns="False" CanUserAddRows="False" MinHeight="200"
+                      Visibility="Collapsed">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="客户端模型 ID" Binding="{Binding RequestModel, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                <DataGridTextColumn Header="网页实际模型" Binding="{Binding ActualModel, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                <DataGridTemplateColumn Header="操作" Width="72">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Button Content="删除" Click="DeleteMapping_Click" Tag="{Binding}"
+                              Style="{StaticResource DsDangerLinkButton}" HorizontalAlignment="Left"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+          </Grid>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="会话" MinWidth="64">
+        <DockPanel LastChildFill="True">
+          <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="会话模式" Style="{StaticResource DsCaption}"/>
+              <ComboBox x:Name="SessionModeCombo" Style="{StaticResource DsComboBox}" Margin="0,6,0,0" MaxWidth="280"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
+              <Button Content="刷新" Click="RefreshSessions_Click" Style="{StaticResource DsGhostButton}"
+                      MinHeight="36" Margin="0,0,8,0"/>
+              <Button Content="清空全部" Click="ClearSessions_Click" Style="{StaticResource DsGhostButton}" MinHeight="36"/>
+            </StackPanel>
+          </Grid>
+          <TextBlock x:Name="SessionHintText" DockPanel.Dock="Top" Style="{StaticResource DsHint}"
+                     Margin="0,0,0,12" TextWrapping="Wrap"/>
+          <DataGrid x:Name="SessionsGrid" Style="{StaticResource DsDataGrid}"
+                    AutoGenerateColumns="False" IsReadOnly="True" MinHeight="240">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="session_id" Binding="{Binding ClientSessionId}" Width="*"/>
+              <DataGridTextColumn Header="网页会话" Binding="{Binding WebSessionId}" Width="*"/>
+              <DataGridTextColumn Header="消息数" Binding="{Binding MessageCount}" Width="64"/>
+              <DataGridTextColumn Header="最后活跃" Binding="{Binding LastUsedText}" Width="140"/>
+              <DataGridTemplateColumn Header="操作" Width="72">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Button Content="删除" Tag="{Binding ClientSessionId}" Click="DeleteSession_Click"
+                            Style="{StaticResource DsDangerLinkButton}" HorizontalAlignment="Left"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="API Key">
+        <StackPanel>
+          <TextBlock Text="API Key 认证" Style="{StaticResource DsSectionTitle}"/>
+          <TextBlock Text="管理外部客户端访问本地 API 的密钥（本机 Agent 免认证）"
+                     Style="{StaticResource DsHint}" Margin="0,6,0,20" TextWrapping="Wrap"/>
+          <Button Content="打开 API Key 管理…" Click="OpenApiKeys_Click" Style="{StaticResource DsPrimaryButton}"
+                  HorizontalAlignment="Left" Padding="16,0" MinHeight="36"/>
+        </StackPanel>
+      </TabItem>
+
+      <TabItem Header="API 能力" MinWidth="88">
+        <ScrollViewer Style="{StaticResource DsScrollViewer}" VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock Text="客户端配置" Style="{StaticResource DsSectionTitle}"/>
+            <Border Background="{StaticResource DsBlueLight}" CornerRadius="10" Padding="14,12" Margin="0,10,0,16">
+              <TextBlock Style="{StaticResource DsBody}" TextWrapping="Wrap" LineHeight="22">
+                <Run FontWeight="SemiBold" Foreground="{StaticResource DsBlue}">Base URL</Run>
+                <Run Text="  http://127.0.0.1:端口/v1"/>
+                <LineBreak/>
+                <Run FontWeight="SemiBold" Foreground="{StaticResource DsBlue}">官方 API 模型</Run>
+                <Run Text="  deepseek-v4-pro、deepseek-v4-flash（见 api-docs.deepseek.com）"/>
+                <LineBreak/>
+                <Run FontWeight="SemiBold" Foreground="{StaticResource DsBlue}">网页桥接模型</Run>
+                <Run Text="  DeepSeek-V3.2、DeepSeek-R1、DeepSeek-Search"/>
+              </TextBlock>
+            </Border>
+            <TextBlock Text="兼容端点" Style="{StaticResource DsSectionTitle}"/>
+            <TextBlock Style="{StaticResource DsBody}" TextWrapping="Wrap" LineHeight="24" Margin="0,8,0,0"
+                       Foreground="{StaticResource DsMuted}">
+POST /v1/chat/completions — stream、web_search、reasoning_effort、session_id
+GET  /v1/models — 仅 DeepSeek 模型
+GET  /v1/models/{id}
+GET  /v1/health
+GET  /v1/admin/sessions（本机）
+DELETE /v1/admin/sessions/{id}（本机）
+            </TextBlock>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>

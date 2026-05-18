@@ -16,6 +16,9 @@ public sealed class AgentSessionFile
     public long CreatedAt { get; set; }
     public long UpdatedAt { get; set; }
     public List<AgentSessionMessage> Messages { get; set; } = new();
+
+    /// <summary>DeepSeek-TUI 运行时线程 ID，用于多轮对话续接。</summary>
+    public string? TuiThreadId { get; set; }
 }
 
 public sealed class AgentSessionMessage

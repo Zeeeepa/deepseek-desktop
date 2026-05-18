@@ -690,4 +690,199 @@
     <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
   </Style>
 
+  <!-- Tab：对齐 chat.deepseek.com 设置页下划线标签 -->
+  <Style x:Key="DsTabItem" TargetType="TabItem">
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Foreground" Value="{StaticResource DsMuted}"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Padding" Value="12,10,12,12"/>
+    <Setter Property="Margin" Value="0,0,8,0"/>
+    <Setter Property="MinWidth" Value="72"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TabItem">
+          <Border x:Name="Bd" Background="Transparent" BorderThickness="0,0,0,2"
+                  BorderBrush="Transparent" Padding="{TemplateBinding Padding}"
+                  MinWidth="{TemplateBinding MinWidth}">
+            <ContentPresenter ContentSource="Header"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center"
+                              RecognizesAccessKey="False"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource DsBlue}"/>
+              <Setter Property="Foreground" Value="{StaticResource DsBlue}"/>
+              <Setter Property="FontWeight" Value="SemiBold"/>
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter Property="Foreground" Value="{StaticResource DsText}"/>
+            </Trigger>
+            <MultiTrigger>
+              <MultiTrigger.Conditions>
+                <Condition Property="IsSelected" Value="True"/>
+                <Condition Property="IsMouseOver" Value="True"/>
+              </MultiTrigger.Conditions>
+              <Setter Property="Foreground" Value="{StaticResource DsBlueHover}"/>
+            </MultiTrigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="DsTabControl" TargetType="TabControl">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="ItemContainerStyle" Value="{StaticResource DsTabItem}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TabControl">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <ScrollViewer Grid.Row="0"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Disabled"
+                          PanningMode="HorizontalOnly">
+              <TabPanel IsItemsHost="True" Background="Transparent"/>
+            </ScrollViewer>
+            <Border Grid.Row="1" Style="{StaticResource DsCard}" Padding="16" Margin="0,12,0,0">
+              <ContentPresenter ContentSource="SelectedContent"/>
+            </Border>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- DataGrid：白底、浅灰表头、横线分隔 -->
+  <Style x:Key="DsDataGridColumnHeader" TargetType="DataGridColumnHeader">
+    <Setter Property="Background" Value="#F9FAFB"/>
+    <Setter Property="Foreground" Value="{StaticResource DsCaptionBrush}"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+    <Setter Property="Padding" Value="12,0"/>
+    <Setter Property="Height" Value="40"/>
+    <Setter Property="BorderBrush" Value="{StaticResource DsBorder}"/>
+    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="DataGridColumnHeader">
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter VerticalAlignment="Center"/>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="DsDataGridCell" TargetType="DataGridCell">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="12,0"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Foreground" Value="{StaticResource DsText}"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="DataGridCell">
+          <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True">
+            <ContentPresenter VerticalAlignment="Center"/>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property="IsSelected" Value="True">
+        <Setter Property="Background" Value="{StaticResource DsBlueLight}"/>
+        <Setter Property="Foreground" Value="{StaticResource DsText}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <Style x:Key="DsDataGridRow" TargetType="DataGridRow">
+    <Setter Property="Background" Value="White"/>
+    <Setter Property="MinHeight" Value="44"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="Background" Value="#FAFAFA"/>
+      </Trigger>
+      <Trigger Property="IsSelected" Value="True">
+        <Setter Property="Background" Value="{StaticResource DsBlueLight}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <Style x:Key="DsDataGrid" TargetType="DataGrid">
+    <Setter Property="Background" Value="White"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+    <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource DsBorder}"/>
+    <Setter Property="HeadersVisibility" Value="Column"/>
+    <Setter Property="RowHeight" Value="44"/>
+    <Setter Property="CanUserAddRows" Value="False"/>
+    <Setter Property="CanUserResizeRows" Value="False"/>
+    <Setter Property="SelectionMode" Value="Single"/>
+    <Setter Property="SelectionUnit" Value="FullRow"/>
+    <Setter Property="ColumnHeaderStyle" Value="{StaticResource DsDataGridColumnHeader}"/>
+    <Setter Property="CellStyle" Value="{StaticResource DsDataGridCell}"/>
+    <Setter Property="RowStyle" Value="{StaticResource DsDataGridRow}"/>
+    <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+    <Setter Property="EnableRowVirtualization" Value="True"/>
+  </Style>
+
+  <Style x:Key="DsEmptyPanel" TargetType="Border">
+    <Setter Property="Background" Value="#FAFAFA"/>
+    <Setter Property="BorderBrush" Value="{StaticResource DsBorder}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="12"/>
+    <Setter Property="MinHeight" Value="200"/>
+  </Style>
+
+  <Style x:Key="DsWarningBanner" TargetType="Border">
+    <Setter Property="Background" Value="#FFFBEB"/>
+    <Setter Property="BorderBrush" Value="#FDE68A"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="10"/>
+    <Setter Property="Padding" Value="12,10"/>
+    <Setter Property="Margin" Value="0,12,0,0"/>
+  </Style>
+
+  <Style x:Key="DsDangerLinkButton" TargetType="Button">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Foreground" Value="{StaticResource DsDanger}"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="Padding" Value="6,4"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="#FEF2F2"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
 </ResourceDictionary>

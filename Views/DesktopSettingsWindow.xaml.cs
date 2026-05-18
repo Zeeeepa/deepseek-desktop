@@ -8,7 +8,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
-using DeepSeekBrowser.Services.QwenCode;
+using DeepSeekBrowser.Services.DeepSeekTui;
 
 namespace DeepSeekBrowser.Views;
 
@@ -29,8 +29,8 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         MaxStepsBox.Text = config.MaxAgentSteps.ToString();
         MaxSubStepsBox.Text = config.MaxSubAgentSteps.ToString();
         AgentStrategyCombo.Items.Clear();
-        AgentStrategyCombo.Items.Add("ReAct 单 Agent");
-        AgentStrategyCombo.Items.Add("计划 + 子 Agent");
+        AgentStrategyCombo.Items.Add("Agent 模式（多步工具）");
+        AgentStrategyCombo.Items.Add("Plan 模式（只读调研）");
         AgentStrategyCombo.SelectedIndex = string.Equals(config.DefaultAgentStrategy, AgentStrategies.Plan,
             StringComparison.OrdinalIgnoreCase)
             ? 1
@@ -42,28 +42,61 @@ public partial class DesktopSettingsWindow : System.Windows.Window
             ? (Brush)FindResource("DsDanger")
             : (Brush)FindResource("DsSuccess");
         BindAgentStorageSettings(config);
-        BindQwenCodeSettings(config);
+        BindDeepSeekTuiSettings(config);
+        Loaded += async (_, _) => await RefreshDeepSeekTuiStatusAsync(config);
+        BindChat2ApiSummary(config);
         RefreshMcpList();
     }
 
-    private void BindQwenCodeSettings(AppConfig config)
+    private void BindChat2ApiSummary(AppConfig config)
     {
-        var npmVer = QwenCodePort.TryReadInstalledNpmVersion();
-        QwenPortInfoText.Text = QwenCodePort.DescribePort()
-            + (npmVer is not null
-                ? $"\n本机 npm 参考: {QwenCodePort.ReferencePackage}@{npmVer}（运行时不启动子进程）"
-                : "\n未检测到 npm 安装，不影响 C# Core 运行。");
-        QwenBuiltinCheck.IsChecked = config.EnableQwenCodeBuiltinTools;
-        QwenWorkspaceBox.Text = config.QwenCodeWorkspaceRoot ?? "";
-        QwenAllowShellCheck.IsChecked = config.QwenCodeAllowShell;
-        QwenWebFetchCheck.IsChecked = config.EnableQwenCodeWebFetch;
-        QwenAdaptiveTokensCheck.IsChecked = config.EnableAdaptiveOutputEscalation;
-        QwenApprovalCombo.Items.Clear();
-        QwenApprovalCombo.Items.Add("智能（只读自动）");
-        QwenApprovalCombo.Items.Add("只读自动");
-        QwenApprovalCombo.Items.Add("全部需确认");
-        QwenApprovalCombo.Items.Add("从不确认（不安全）");
-        QwenApprovalCombo.SelectedIndex = config.QwenCodeApprovalMode?.ToLowerInvariant() switch
+        Chat2ApiCompat.EnsureDefaultMappings(config);
+        var maps = config.ModelMappings.Count;
+        var keys = config.LocalApiKeys.Count;
+        var mode = string.Equals(config.Chat2ApiSessionMode, "multi", StringComparison.OrdinalIgnoreCase)
+            ? "多轮" : "单轮";
+        Chat2ApiSummaryText.Text =
+            $"客户端模型: {Chat2ApiCompat.DefaultModel} · 会话 {mode} · {maps} 条别名 · API Key {keys} 个" +
+            (config.EnableLocalApiKeyAuth ? "（认证已启用）" : "");
+    }
+
+    private void ManageChat2Api_Click(object sender, RoutedEventArgs e)
+    {
+        if (Config is null) Config = new AppConfig();
+        var dlg = new Chat2ApiManagementWindow(Config, c =>
+        {
+            Config = c;
+            BindChat2ApiSummary(c);
+        })
+        { Owner = this };
+        dlg.ShowDialog();
+    }
+
+    private void BindDeepSeekTuiSettings(AppConfig config)
+    {
+        var port = config.DeepSeekTuiRuntimePort > 0 ? config.DeepSeekTuiRuntimePort : 7878;
+        var bundled = DeepSeekTuiBundle.IsBundledComplete ? "已内置" : "未内置（将自动下载）";
+        var sourceRoot = DeepSeekTuiSourceBuild.ResolveRepositoryRoot(config);
+        var sourceHint = sourceRoot is null
+            ? "未检测到本地源码"
+            : (DeepSeekTuiSourceBuild.TryResolveReleaseBinaries(config) is not null
+                ? "已编译 release"
+                : "源码已找到，未编译");
+        TuiPortInfoText.Text =
+            "DeepSeek-TUI Agent 引擎（内置）· Plan / Agent / YOLO\n" +
+            $"Runtime API：127.0.0.1:{port} · 二进制：{bundled} · 源码：{sourceHint}\n" +
+            "LLM：Chat2API（网页 Token）→ ~/.deepseek/config.toml · 非 api.deepseek.com 直连\n" +
+            "模式：/react → Agent · /plan → Plan";
+        TuiSourcePathBox.Text = config.DeepSeekTuiSourcePath ?? "";
+        AgentWorkspaceBox.Text = config.AgentWorkspaceRoot ?? "";
+        AgentAllowShellCheck.IsChecked = config.AgentAllowShell;
+        AdaptiveOutputCheck.IsChecked = config.EnableAdaptiveOutputEscalation;
+        AgentApprovalCombo.Items.Clear();
+        AgentApprovalCombo.Items.Add("智能（只读自动）");
+        AgentApprovalCombo.Items.Add("只读自动");
+        AgentApprovalCombo.Items.Add("全部需确认");
+        AgentApprovalCombo.Items.Add("从不确认（不安全）");
+        AgentApprovalCombo.SelectedIndex = config.AgentApprovalMode?.ToLowerInvariant() switch
         {
             "readonly" => 1,
             "always" => 2,
@@ -112,13 +145,12 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         var store = new AgentSessionStore();
         var deleted = store.ApplyRetentionPolicy(Config);
         BindAgentStorageSettings(Config);
-        MessageBox.Show(
+        DsMessageDialog.Info(
+            this,
             deleted.Count > 0
                 ? $"已按规则清理 {deleted.Count} 条最旧或超期的对话。"
                 : "无需清理，或未启用保留/容量规则。",
-            "Agent 存储",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+            "Agent 存储");
         await Task.CompletedTask;
     }
 
@@ -294,7 +326,7 @@ public partial class DesktopSettingsWindow : System.Windows.Window
             var tools = await _mcpHub.ListToolNamesAsync(server.Id, CancellationToken.None);
             if (tools.Count == 0)
             {
-                MessageBox.Show("当前没有可用工具。", server.Name, MessageBoxButton.OK, MessageBoxImage.Information);
+                DsMessageDialog.Info(this, "当前没有可用工具。", server.Name);
                 return;
             }
 
@@ -302,7 +334,7 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "工具列表", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DsMessageDialog.Warning(this, ex.Message, "工具列表");
         }
     }
 
@@ -321,7 +353,7 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, server.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+            DsMessageDialog.Warning(this, ex.Message, server.Name);
             server.Enabled = false;
             toggle.IsChecked = false;
         }
@@ -342,8 +374,7 @@ public partial class DesktopSettingsWindow : System.Windows.Window
 
     private async Task RemoveServerAsync(McpServerConfig server)
     {
-        if (MessageBox.Show($"确定删除 MCP 服务器「{server.Name}」？", "删除",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (!DsMessageDialog.Confirm(this, $"确定删除 MCP 服务器「{server.Name}」？", "删除", "删除", "取消"))
             return;
 
         try { await _mcpHub.DisconnectAsync(server.Id, CancellationToken.None); }
@@ -398,16 +429,15 @@ public partial class DesktopSettingsWindow : System.Windows.Window
             if (errors.Count > 0)
                 summary += "\n\n失败:\n" + string.Join("\n", errors);
 
-            MessageBox.Show(
-                summary,
-                "MCP",
-                MessageBoxButton.OK,
-                errors.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            if (errors.Count > 0)
+                DsMessageDialog.Warning(this, summary, "MCP");
+            else
+                DsMessageDialog.Info(this, summary, "MCP");
         }
         catch (Exception ex)
         {
             RefreshMcpList();
-            MessageBox.Show(ex.Message, "MCP", MessageBoxButton.OK, MessageBoxImage.Error);
+            DsMessageDialog.Warning(this, ex.Message, "MCP");
         }
     }
 
@@ -435,24 +465,102 @@ public partial class DesktopSettingsWindow : System.Windows.Window
                 System.Globalization.CultureInfo.InvariantCulture, out var maxGb))
             Config.AgentSessionMaxStorageGb = Math.Max(0, maxGb);
         Config.AgentSessionAutoCleanup = AgentAutoCleanupCheck.IsChecked == true;
-        Config.EnableQwenCodeBuiltinTools = QwenBuiltinCheck.IsChecked == true;
-        Config.QwenCodeWorkspaceRoot = QwenWorkspaceBox.Text.Trim();
-        Config.QwenCodeAllowShell = QwenAllowShellCheck.IsChecked == true;
-        Config.EnableQwenCodeWebFetch = QwenWebFetchCheck.IsChecked == true;
-        Config.EnableAdaptiveOutputEscalation = QwenAdaptiveTokensCheck.IsChecked == true;
-        QwenCodeSettingsStore.Save(QwenCodeSettingsStore.FromAppConfig(Config));
-        Config.QwenCodeApprovalMode = QwenApprovalCombo.SelectedIndex switch
+        Config.DeepSeekTuiSourcePath = TuiSourcePathBox.Text.Trim();
+        Config.AgentWorkspaceRoot = AgentWorkspaceBox.Text.Trim();
+        Config.AgentAllowShell = AgentAllowShellCheck.IsChecked == true;
+        Config.EnableAdaptiveOutputEscalation = AdaptiveOutputCheck.IsChecked == true;
+        Config.AgentApprovalMode = AgentApprovalCombo.SelectedIndex switch
         {
             1 => "readonly",
             2 => "always",
             3 => "never",
             _ => "smart"
         };
-        Config.QwenCodeAutoApproveReadOnly = Config.QwenCodeApprovalMode is "smart" or "readonly";
+        Config.AgentAutoApproveReadOnly = Config.AgentApprovalMode is "smart" or "readonly";
         Config.McpServers = _mcpItems.ToList();
+        DeepSeekTuiConfigSync.Apply(Config);
         ConfigStore.Save(Config);
         DialogResult = true;
         Close();
+    }
+
+    private async Task RefreshDeepSeekTuiStatusAsync(AppConfig config)
+    {
+        try
+        {
+            await DeepSeekTuiBundle.EnsureBinariesAsync(config);
+            var ver = await DeepSeekTuiBundle.TryGetVersionAsync(config.DeepSeekTuiExecutablePath);
+            if (!string.IsNullOrWhiteSpace(ver))
+                TuiPortInfoText.Text += $"\n版本：{ver.Trim()}";
+            using var doc = await DeepSeekTuiBundle.TryDoctorJsonAsync(config.DeepSeekTuiExecutablePath);
+            if (doc is not null &&
+                doc.RootElement.TryGetProperty("api_key", out var key) &&
+                key.TryGetProperty("source", out var src))
+            {
+                TuiPortInfoText.Text += $"\ndoctor：api_key={src.GetString()}";
+            }
+        }
+        catch (Exception ex)
+        {
+            TuiPortInfoText.Text += "\n状态检测：" + ex.Message;
+        }
+    }
+
+    private void OpenDeepSeekHome_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = DeepSeekTuiConfigSync.HomeDirectory;
+        Directory.CreateDirectory(dir);
+        Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+    }
+
+    private async void RunDeepSeekDoctor_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await DeepSeekTuiBundle.EnsureBinariesAsync(Config);
+            if (Config is not null)
+                DeepSeekTuiConfigSync.Apply(Config);
+            using var doc = await DeepSeekTuiBundle.TryDoctorJsonAsync(Config?.DeepSeekTuiExecutablePath);
+            var text = doc is null ? "doctor 无输出，请确认已登录网页或配置 API。" : doc.RootElement.GetRawText();
+            DsMessageDialog.Info(this, text, "deepseek doctor --json");
+        }
+        catch (Exception ex)
+        {
+            DsMessageDialog.Warning(this, ex.Message, "doctor");
+        }
+    }
+
+    private async void BuildDeepSeekTuiFromSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (Config is null) Config = new AppConfig();
+        Config.DeepSeekTuiSourcePath = TuiSourcePathBox.Text.Trim();
+        var repo = DeepSeekTuiSourceBuild.ResolveRepositoryRoot(Config);
+        if (repo is null)
+        {
+            DsMessageDialog.Warning(this, "请填写有效的 DeepSeek-TUI 源码根目录（含 Cargo.toml）。", "编译 TUI");
+            return;
+        }
+
+        try
+        {
+            await DeepSeekTuiSourceBuild.BuildReleaseAsync(repo);
+            await DeepSeekTuiSourceBuild.TryCopyReleaseToToolsAsync(Config);
+            await RefreshDeepSeekTuiStatusAsync(Config);
+            DsMessageDialog.Info(this, "已编译并复制到 Assets/tools。\n请重新运行 build.ps1 部署桌面端，或重启应用。", "编译 TUI");
+        }
+        catch (Exception ex)
+        {
+            DsMessageDialog.Warning(this, ex.Message, "编译 TUI");
+        }
+    }
+
+    private void OpenDeepSeekDocs_Click(object sender, RoutedEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "https://deepseek-tui.com/zh/docs",
+            UseShellExecute = true
+        });
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)

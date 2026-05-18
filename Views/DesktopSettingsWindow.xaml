@@ -30,7 +30,7 @@
       <StackPanel>
         <TextBlock Text="DeepSeek 设置" Style="{StaticResource DsPageTitle}"/>
         <TextBlock Style="{StaticResource DsPageSubtitle}"
-                   Text="本地 Chat2API、Agent 对话存储与 MCP 工具"/>
+                   Text="DeepSeek-TUI Agent、本地 Chat2API 与 MCP"/>
 
         <TextBlock Text="Agent 对话存储" Style="{StaticResource DsSectionTitle}" Margin="0,0,0,10"/>
         <Border Style="{StaticResource DsCard}" Margin="{StaticResource DsSectionGap}">
@@ -67,6 +67,7 @@
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="*"/>
@@ -99,18 +100,29 @@
               <TextBlock Text="子 Agent 最大步数" Style="{StaticResource DsCaption}"/>
               <TextBox x:Name="MaxSubStepsBox" Style="{StaticResource DsTextBox}"/>
             </StackPanel>
+            <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,16,0,0">
+              <Button Content="Chat2API 管理…" Click="ManageChat2Api_Click"
+                      Style="{StaticResource DsGhostButton}" HorizontalAlignment="Left" MinWidth="160"/>
+              <TextBlock x:Name="Chat2ApiSummaryText" Style="{StaticResource DsHint}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
           </Grid>
         </Border>
 
-        <TextBlock Text="Qwen Code Core（C# 移植）" Style="{StaticResource DsSectionTitle}" Margin="0,0,0,10"/>
+        <TextBlock Text="DeepSeek-TUI Agent" Style="{StaticResource DsSectionTitle}" Margin="0,0,0,10"/>
         <Border Style="{StaticResource DsCard}" Margin="{StaticResource DsSectionGap}">
           <StackPanel>
-            <TextBlock x:Name="QwenPortInfoText" Style="{StaticResource DsHint}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-            <CheckBox x:Name="QwenBuiltinCheck" Content="启用 Core 内置工具（read/write/edit/glob/grep/shell）"
-                      Style="{StaticResource DsCheckBox}"/>
-            <TextBlock Text="工作区根目录（留空 = 用户主目录）" Style="{StaticResource DsCaption}" Margin="0,14,0,0"/>
-            <TextBox x:Name="QwenWorkspaceBox" Style="{StaticResource DsTextBox}"/>
-            <Grid Margin="0,14,0,0">
+            <TextBlock x:Name="TuiPortInfoText" Style="{StaticResource DsHint}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+              <Button Content="打开 ~/.deepseek" Click="OpenDeepSeekHome_Click" Style="{StaticResource DsGhostButton}" Padding="10,4" Margin="0,0,8,0"/>
+              <Button Content="运行 doctor" Click="RunDeepSeekDoctor_Click" Style="{StaticResource DsGhostButton}" Padding="10,4" Margin="0,0,8,0"/>
+              <Button Content="从源码编译" Click="BuildDeepSeekTuiFromSource_Click" Style="{StaticResource DsGhostButton}" Padding="10,4" Margin="0,0,8,0"/>
+              <Button Content="官网文档" Click="OpenDeepSeekDocs_Click" Style="{StaticResource DsGhostButton}" Padding="10,4"/>
+            </StackPanel>
+            <TextBlock Text="TUI 源码目录（修改 fork 后点「从源码编译」或 build.ps1 -UseLocalTui）" Style="{StaticResource DsCaption}"/>
+            <TextBox x:Name="TuiSourcePathBox" Style="{StaticResource DsTextBox}" Margin="0,0,0,14"/>
+            <TextBlock Text="工作区根目录（留空 = 用户主目录）" Style="{StaticResource DsCaption}"/>
+            <TextBox x:Name="AgentWorkspaceBox" Style="{StaticResource DsTextBox}" Margin="0,0,0,14"/>
+            <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="16"/>
@@ -118,17 +130,15 @@
               </Grid.ColumnDefinitions>
               <StackPanel Grid.Column="0">
                 <TextBlock Text="工具审批" Style="{StaticResource DsCaption}"/>
-                <ComboBox x:Name="QwenApprovalCombo" Style="{StaticResource DsComboBox}"/>
+                <ComboBox x:Name="AgentApprovalCombo" Style="{StaticResource DsComboBox}"/>
               </StackPanel>
-              <StackPanel Grid.Column="2">
-                <CheckBox x:Name="QwenAllowShellCheck" Content="允许 Shell 命令"
-                          Style="{StaticResource DsCheckBox}" Margin="0,20,0,0"/>
-                <CheckBox x:Name="QwenWebFetchCheck" Content="允许 web_fetch 拉取网页"
-                          Style="{StaticResource DsCheckBox}" Margin="0,8,0,0"/>
-                <CheckBox x:Name="QwenAdaptiveTokensCheck" Content="输出截断时自动续写（Qwen Code 扩容）"
-                          Style="{StaticResource DsCheckBox}" Margin="0,8,0,0"/>
+              <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                <CheckBox x:Name="AgentAllowShellCheck" Content="允许 Shell 命令"
+                          Style="{StaticResource DsCheckBox}"/>
               </StackPanel>
             </Grid>
+            <CheckBox x:Name="AdaptiveOutputCheck" Content="网页对话输出截断时自动续写"
+                      Style="{StaticResource DsCheckBox}" Margin="0,14,0,0"/>
           </StackPanel>
         </Border>
 

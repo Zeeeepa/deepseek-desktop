@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
-using DeepSeekBrowser.Services.QwenCode;
+using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -9,6 +10,8 @@ namespace DeepSeekBrowser.Services;
 public sealed class WebInjectService
 {
     private readonly WebView2 _webView;
+    private readonly WebViewPageKind _pageKind;
+    private WebChatBridgeHost? _apiBridge;
     private string? _bridgeScript;
     private string? _overlayScript;
     private string? _overlayCss;
@@ -18,7 +21,47 @@ public sealed class WebInjectService
     /// <summary>当前 Agent 任务附带的网页端文件 ID（上传后填入 ref_file_ids）。</summary>
     public IReadOnlyList<string> AgentRefFileIds { get; set; } = Array.Empty<string>();
 
-    public WebInjectService(WebView2 webView) => _webView = webView;
+    public WebInjectService(WebView2 webView, WebViewPageKind pageKind = WebViewPageKind.Chat)
+    {
+        _webView = webView;
+        _pageKind = pageKind;
+    }
+
+    public void AttachApiBridge(WebChatBridgeHost apiBridge) => _apiBridge = apiBridge;
+
+    public Task SyncApiBridgeTokenAsync(string? webUserToken) =>
+        _apiBridge?.SyncWebUserTokenAsync(webUserToken) ?? Task.CompletedTask;
+
+    public Task EnsureApiBridgeReadyAsync(CancellationToken ct = default) =>
+        _apiBridge?.EnsureReadyAsync(ct) ?? Task.CompletedTask;
+
+    public Task<Chat2ApiHealth> ProbeChat2ApiHealthAsync(string? configWebUserToken, string baseUrl,
+        CancellationToken ct = default) =>
+        _apiBridge is null
+            ? Task.FromResult(new Chat2ApiHealth
+            {
+                ApiListening = true,
+                ConfigLoggedIn = !string.IsNullOrWhiteSpace(configWebUserToken),
+                BaseUrl = baseUrl,
+                Error = "桥接 WebView 未附加"
+            })
+            : RunOnUiAsync(async () =>
+            {
+                var h = await _apiBridge.ProbeAsync(configWebUserToken, ct);
+                return h with { BaseUrl = baseUrl };
+            });
+
+    private Dispatcher UiDispatcher => _webView.Dispatcher;
+
+    private Task RunOnUiAsync(Func<Task> action) =>
+        UiDispatcher.CheckAccess()
+            ? action()
+            : UiDispatcher.InvokeAsync(action).Task.Unwrap();
+
+    private Task<T> RunOnUiAsync<T>(Func<Task<T>> action) =>
+        UiDispatcher.CheckAccess()
+            ? action()
+            : UiDispatcher.InvokeAsync(action).Task.Unwrap();
 
     public async Task AttachAsync(CoreWebView2 core)
     {
@@ -42,28 +85,48 @@ public sealed class WebInjectService
         if (!string.IsNullOrEmpty(_overlayCss))
         {
             var cssEsc = JsonSerializer.Serialize(_overlayCss);
-            await core.AddScriptToExecuteOnDocumentCreatedAsync(
-                "(function(){try{"
-                + "if(/^ds-agent\\.local$/i.test(location.hostname))return;"
-                + "var p=document.head||document.documentElement;"
-                + "if(!p)return;"
-                + $"var s=document.createElement('style');s.textContent={cssEsc};"
-                + "p.appendChild(s);"
-                + "}catch(e){}})();");
+            if (_pageKind == WebViewPageKind.Chat)
+            {
+                await core.AddScriptToExecuteOnDocumentCreatedAsync(
+                    "(function(){try{"
+                    + "if(/^ds-agent\\.local$/i.test(location.hostname))return;"
+                    + "var p=document.head||document.documentElement;"
+                    + "if(!p)return;"
+                    + $"var s=document.createElement('style');s.textContent={cssEsc};"
+                    + "p.appendChild(s);"
+                    + "}catch(e){}})();");
+            }
         }
 
-        var overlayGuarded =
-            "if(!/^ds-agent\\.local$/i.test(location.hostname)){" + _overlayScript + "}";
-        await core.AddScriptToExecuteOnDocumentCreatedAsync(overlayGuarded);
+        if (_pageKind == WebViewPageKind.Chat)
+        {
+            var overlayGuarded =
+                "if(!/^ds-agent\\.local$/i.test(location.hostname)){" + _overlayScript + "}";
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(overlayGuarded);
+        }
         core.WebMessageReceived += OnWebMessageReceived;
     }
 
-    public bool IsAgentHostPage =>
+    public bool IsAgentHostPage
+    {
+        get
+        {
+            if (UiDispatcher.CheckAccess())
+                return IsAgentHostPageOnUi();
+            return UiDispatcher.Invoke(IsAgentHostPageOnUi);
+        }
+    }
+
+    private bool IsAgentHostPageOnUi() =>
+        _pageKind == WebViewPageKind.Agent ||
         AppNavigation.IsAgentPage(_webView.CoreWebView2?.Source);
 
-    public async Task TriggerInjectAsync(bool forceReset = false)
+    public Task TriggerInjectAsync(bool forceReset = false) =>
+        RunOnUiAsync(() => TriggerInjectOnUiAsync(forceReset));
+
+    private async Task TriggerInjectOnUiAsync(bool forceReset)
     {
-        if (_webView.CoreWebView2 is null || IsAgentHostPage) return;
+        if (_webView.CoreWebView2 is null || _pageKind == WebViewPageKind.Agent || IsAgentHostPageOnUi()) return;
         var flag = forceReset ? "true" : "false";
         await _webView.CoreWebView2.ExecuteScriptAsync(
             "(function(){"
@@ -84,11 +147,35 @@ public sealed class WebInjectService
 
     public async Task ReinjectAsync() => await BurstInjectAsync();
 
+    private static string ResolveInjectDir()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "Assets", "inject"),
+            Path.Combine(AppContext.BaseDirectory, "inject")
+        };
+        foreach (var dir in candidates)
+        {
+            if (File.Exists(Path.Combine(dir, "bridge.js")) &&
+                File.Exists(Path.Combine(dir, "overlay.js")))
+                return dir;
+        }
+
+        throw new DirectoryNotFoundException(
+            "找不到注入资源目录 Assets\\inject（bridge.js / overlay.js）。"
+            + "请从源码目录运行 build.ps1 重新部署，或不要只复制 DeepSeek.exe。");
+    }
+
     private static readonly Lazy<(string Bridge, string Overlay, string Css)> InjectAssets = new(() =>
     {
-        var baseDir = Path.Combine(AppContext.BaseDirectory, "Assets", "inject");
+        var baseDir = ResolveInjectDir();
         var themePath = Path.Combine(baseDir, "ds-theme.css");
-        var overlayCss = File.ReadAllText(Path.Combine(baseDir, "overlay.css"));
+        var overlayCssPath = Path.Combine(baseDir, "overlay.css");
+        if (!File.Exists(overlayCssPath))
+            throw new FileNotFoundException(
+                $"缺少 {overlayCssPath}。请重新运行 build.ps1 完整部署到桌面 DeepSeek-Edge。", overlayCssPath);
+
+        var overlayCss = File.ReadAllText(overlayCssPath);
         if (File.Exists(themePath))
             overlayCss = File.ReadAllText(themePath) + "\n" + overlayCss;
         return (
@@ -120,10 +207,13 @@ public sealed class WebInjectService
         }
     }
 
-    public async Task PostToPageAsync(object message)
+    public Task PostToPageAsync(object message) =>
+        RunOnUiAsync(() => PostToPageOnUiAsync(message));
+
+    private async Task PostToPageOnUiAsync(object message)
     {
         if (_webView.CoreWebView2 is null) return;
-        var json = JsonSerializer.Serialize(message);
+        var json = JsonSerializer.Serialize(message, AgentSessionJson.Options);
         await _webView.CoreWebView2.ExecuteScriptAsync(
             "(function(m){"
             + "try{"
@@ -134,9 +224,12 @@ public sealed class WebInjectService
             + "})(" + json + ");");
     }
 
-    public async Task PushAgentAuthHintAsync(bool loggedIn)
+    public Task PushAgentAuthHintAsync(bool loggedIn) =>
+        RunOnUiAsync(() => PushAgentAuthHintOnUiAsync(loggedIn));
+
+    private async Task PushAgentAuthHintOnUiAsync(bool loggedIn)
     {
-        if (_webView.CoreWebView2 is null || !IsAgentHostPage) return;
+        if (_webView.CoreWebView2 is null || !IsAgentHostPageOnUi()) return;
         var lit = loggedIn ? "true" : "false";
         await _webView.CoreWebView2.ExecuteScriptAsync(
             "window.__dsLoggedIn=" + lit + ";"
@@ -245,8 +338,15 @@ public sealed class WebInjectService
             _ => el.GetRawText()
         };
 
-    public async Task<string?> ExecuteBridgeAsync(string expression, CancellationToken ct = default)
+    public Task<string?> ExecuteBridgeAsync(string expression, CancellationToken ct = default) =>
+        RunOnUiAsync(() => ExecuteBridgeOnUiAsync(expression, ct));
+
+    private async Task<string?> ExecuteBridgeOnUiAsync(string expression, CancellationToken ct)
     {
+        if (_apiBridge is not null && (IsAgentHostPageOnUi() || _webView.CoreWebView2 is null))
+            return await _apiBridge.ExecuteBridgeAsync(expression, ct);
+
+        ct.ThrowIfCancellationRequested();
         if (_webView.CoreWebView2 is null) return null;
         var wrapped =
             "(async function(){ try { return JSON.stringify({ ok: true, data: await (" + expression + ") }); } catch(e) { return JSON.stringify({ ok: false, error: String(e.message || e) }); } })()";
@@ -255,16 +355,103 @@ public sealed class WebInjectService
         return ExtractBridgeData(raw);
     }
 
-    public Task<string?> GetUserTokenAsync() =>
-        ExecuteBridgeAsync("window.dsDesktopBridge && window.dsDesktopBridge.getToken()");
+    public Task<string?> GetUserTokenAsync(bool waitForBridge = true) =>
+        waitForBridge
+            ? (_apiBridge is not null
+                ? _apiBridge.ExecuteBridgeAsync("window.dsDesktopBridge && window.dsDesktopBridge.getToken()")
+                : ExecuteBridgeAsync("window.dsDesktopBridge && window.dsDesktopBridge.getToken()"))
+            : TryReadUserTokenQuickAsync();
 
-    public async Task<WebChatResult> WebChatAsync(
+    /// <summary>从桥接页或主 WebView 读取 userToken（不等待桥接 90s 超时）。</summary>
+    public async Task<string?> TryReadUserTokenAsync() => await TryReadUserTokenQuickAsync();
+
+    private async Task<string?> TryReadUserTokenQuickAsync()
+    {
+        try
+        {
+            if (_apiBridge is not null)
+            {
+                var fromBridge = await _apiBridge.TryExecuteBridgeIfReadyAsync(
+                    "window.dsDesktopBridge && window.dsDesktopBridge.getToken()");
+                var t = NormalizeTokenRaw(fromBridge);
+                if (!string.IsNullOrWhiteSpace(t))
+                    return t;
+            }
+
+            if (!IsAgentHostPageOnUi() && _webView.CoreWebView2 is not null)
+            {
+                var raw = await _webView.CoreWebView2.ExecuteScriptAsync(
+                    "(function(){try{"
+                    + "if(window.dsDesktopBridge&&window.dsDesktopBridge.getToken)"
+                    + "return window.dsDesktopBridge.getToken();"
+                    + "return localStorage.getItem('userToken')||'';"
+                    + "}catch(e){return '';}})()");
+                return NormalizeTokenRaw(raw);
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? NormalizeTokenRaw(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw == "null") return null;
+        return raw.Trim().Trim('"');
+    }
+
+    private async Task InjectWebUserTokenOnUiAsync(string? webUserToken)
+    {
+        if (_webView.CoreWebView2 is null || string.IsNullOrWhiteSpace(webUserToken))
+            return;
+        var esc = JsonSerializer.Serialize(webUserToken);
+        await _webView.CoreWebView2.ExecuteScriptAsync($"window.__dsWebUserToken={esc};");
+    }
+
+    public IAsyncEnumerable<WebChatStreamEvent> WebChatStreamAsync(
         IReadOnlyList<ChatMessage> messages,
         string model,
         bool thinking,
         bool search,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? webUserToken = null,
+        string? webChatSessionId = null)
     {
+        if (_apiBridge is null)
+            throw new InvalidOperationException("流式 Chat 需要 Chat2API 桥接 WebView，请重启应用。");
+
+        return _apiBridge.WebChatStreamAsync(
+            messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId);
+    }
+
+    public Task<WebChatResult> WebChatAsync(
+        IReadOnlyList<ChatMessage> messages,
+        string model,
+        bool thinking,
+        bool search,
+        CancellationToken ct,
+        string? webUserToken = null,
+        string? webChatSessionId = null) =>
+        RunOnUiAsync(() => WebChatOnUiAsync(messages, model, thinking, search, ct, webUserToken, webChatSessionId));
+
+    private async Task<WebChatResult> WebChatOnUiAsync(
+        IReadOnlyList<ChatMessage> messages,
+        string model,
+        bool thinking,
+        bool search,
+        CancellationToken ct,
+        string? webUserToken,
+        string? webChatSessionId)
+    {
+        if (_apiBridge is not null)
+        {
+            return await _apiBridge.WebChatAsync(
+                messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId);
+        }
+
         var payload = new List<object>();
         foreach (var m in messages)
         {
@@ -298,10 +485,13 @@ public sealed class WebInjectService
             thinking,
             search,
             modelType = "expert",
-            refFileIds = AgentRefFileIds
+            refFileIds = AgentRefFileIds,
+            chatSessionId = webChatSessionId
         });
+        await InjectWebUserTokenOnUiAsync(webUserToken);
+
         var expr = $"window.dsDesktopBridge.webChatCompletion({msgJson}, {JsonSerializer.Serialize(model)}, {optsJson})";
-        var raw = await ExecuteBridgeAsync(expr, ct)
+        var raw = await ExecuteBridgeOnUiAsync(expr, ct)
                   ?? throw new InvalidOperationException("网页桥接无响应");
 
         using var doc = JsonDocument.Parse(raw);
@@ -331,6 +521,10 @@ public sealed class WebInjectService
         var likelyFromBridge = root.TryGetProperty("is_likely_truncated", out var lt) && lt.ValueKind == JsonValueKind.True;
         var likely = likelyFromBridge || AdaptiveOutputTokenEscalation.DetectHeuristicTruncation(content);
 
+        var chatSessionId = root.TryGetProperty("chat_session_id", out var cs)
+            ? JsonElementToText(cs)
+            : null;
+
         return new WebChatResult
         {
             Content = content,
@@ -342,7 +536,8 @@ public sealed class WebInjectService
                 ? JsonElementToText(modelEl) ?? model
                 : model,
             FinishReason = finishReason ?? (likely ? "length" : "stop"),
-            IsLikelyTruncated = likely
+            IsLikelyTruncated = likely,
+            ChatSessionId = chatSessionId
         };
     }
 }

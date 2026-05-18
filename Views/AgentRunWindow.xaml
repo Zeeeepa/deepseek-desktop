@@ -15,9 +15,10 @@
     </Grid.RowDefinitions>
 
     <StackPanel Grid.Row="0" Margin="0,0,0,14">
-      <TextBlock Text="Agent 工作台" Style="{StaticResource DsPageTitle}"/>
+      <TextBlock Text="DeepSeek Agent" Style="{StaticResource DsPageTitle}"/>
       <TextBlock Style="{StaticResource DsPageSubtitle}" Margin="0,0,0,0"
-                 Text="127.0.0.1 Chat2API → 网页会话 · MCP 多步执行"/>
+                 TextWrapping="Wrap"
+                 Text="DeepSeek-TUI · Chat2API 网页会话 · 工具/MCP"/>
     </StackPanel>
 
     <Border Grid.Row="1" Style="{StaticResource DsCard}" Padding="12" Margin="0,0,0,10">

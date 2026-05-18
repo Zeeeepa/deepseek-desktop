@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Windows;
 using DeepSeekBrowser.Models;
-using DeepSeekBrowser.Services.QwenCode;
+using DeepSeekBrowser.Services.DeepSeekTui;
 using DeepSeekBrowser.Views;
 
 namespace DeepSeekBrowser.Services;
@@ -9,9 +9,9 @@ namespace DeepSeekBrowser.Services;
 public sealed class DesktopAgentHost : IAsyncDisposable
 {
     private readonly McpHub _mcpHub = new();
-    private readonly QwenCodeCore _qwenCode;
-    private readonly QwenCodeAgentRunner _qwenAgent;
-    private readonly WebInjectService _web;
+    private readonly DeepSeekTuiHost _tuiHost = new();
+    private DeepSeekTuiAgentRunner? _tuiAgent;
+    private readonly DesktopWebHost _pages;
     private readonly LocalOpenAiServer _localApi;
     private readonly AgentSessionStore _agentSessions = new();
     private AppConfig _config = new();
@@ -21,51 +21,103 @@ public sealed class DesktopAgentHost : IAsyncDisposable
 
     public Func<string, Task>? NavigateToUrl { get; set; }
 
-    public DesktopAgentHost(WebInjectService web, LocalOpenAiServer localApi)
+    private static Task RunOnUiAsync(Func<Task> action)
     {
-        _web = web;
+        var dispatcher = Application.Current.Dispatcher;
+        return dispatcher.CheckAccess()
+            ? action()
+            : dispatcher.InvokeAsync(action).Task.Unwrap();
+    }
+
+    private async Task NavigateForWorkModeAsync(string targetUrl, string mode)
+    {
+        if (NavigateToUrl is null) return;
+
+        await RunOnUiAsync(async () =>
+        {
+            await NavigateToUrl(targetUrl);
+            if (mode == "chat")
+                await _pages.TriggerChatInjectAsync(forceReset: false);
+        });
+    }
+
+    public DesktopAgentHost(DesktopWebHost pages, LocalOpenAiServer localApi)
+    {
+        _pages = pages;
         _localApi = localApi;
-        _qwenCode = new QwenCodeCore(_mcpHub);
-        _qwenAgent = new QwenCodeAgentRunner(_qwenCode, new LocalChat2ApiClient(localApi, web));
-        _web.MessageReceived += OnWebMessage;
+        _pages.MessageReceived += OnWebMessage;
     }
 
     public void SetOwner(Window owner)
     {
         _owner = owner;
-        _qwenCode.Approval.RequestApprovalAsync = RequestToolApprovalAsync;
     }
 
-    private Task<bool> RequestToolApprovalAsync(string toolName, string detail, ToolRisk risk)
+    private Task<bool> RequestToolApprovalAsync(string toolName, string detail) =>
+        RequestToolApprovalAsync(toolName, detail, "执行工具", "DeepSeek-TUI 工具审批");
+
+    private Task<bool> RequestToolApprovalAsync(string toolName, string detail, string action, string title)
     {
         var tcs = new TaskCompletionSource<bool>();
         Application.Current.Dispatcher.Invoke(() =>
         {
-            var action = risk switch
-            {
-                ToolRisk.Execute => "执行命令",
-                ToolRisk.Write => "写入文件",
-                _ => "读取"
-            };
-            var result = MessageBox.Show(
+            var allowed = Views.DsMessageDialog.Confirm(
                 _owner,
                 $"Agent 请求{action}：\n\n工具: {toolName}\n\n{detail}\n\n是否允许？",
-                "Qwen Code 工具审批",
-                MessageBoxButton.YesNo,
-                risk == ToolRisk.ReadOnly ? MessageBoxImage.Question : MessageBoxImage.Warning);
-            tcs.TrySetResult(result == MessageBoxResult.Yes);
+                title,
+                "允许",
+                "拒绝");
+            tcs.TrySetResult(allowed);
         });
         return tcs.Task;
     }
 
+    private DeepSeekTuiAgentRunner GetTuiAgent() =>
+        _tuiAgent ??= new DeepSeekTuiAgentRunner(_tuiHost, (tool, desc) => RequestToolApprovalAsync(tool, desc));
+
     public void Start()
     {
         _config = ConfigStore.Load();
+        Chat2ApiCompat.EnsureDefaultMappings(_config);
         _localApi.UpdateConfig(_config);
         _localApi.Start();
         if (_config.AgentSessionAutoCleanup)
             _agentSessions.ApplyRetentionPolicy(_config);
         _ = ConnectEnabledMcpServersAsync();
+        _ = WarmChat2ApiBridgeAsync();
+        _ = WarmDeepSeekTuiAsync();
+    }
+
+    private async Task WarmDeepSeekTuiAsync()
+    {
+        try
+        {
+            ReloadConfig();
+            if (string.IsNullOrWhiteSpace(_config.WebUserToken))
+                return;
+            await DeepSeekTuiBundle.EnsureBinariesAsync(_config).ConfigureAwait(false);
+            DeepSeekTuiConfigSync.Apply(_config);
+            await _tuiHost.EnsureRunningAsync(_config, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // 启动预热失败不阻塞主界面；发送 Agent 消息时会再次尝试
+        }
+    }
+
+    public async Task WarmChat2ApiBridgeAsync()
+    {
+        ReloadConfig();
+        if (!string.IsNullOrWhiteSpace(_config.WebUserToken))
+            await _pages.SyncApiBridgeTokenAsync(_config.WebUserToken);
+        try
+        {
+            await _pages.EnsureApiBridgeReadyAsync();
+        }
+        catch
+        {
+            // 启动时网络未就绪可忽略，发消息前会再次探测
+        }
     }
 
     private async Task ConnectEnabledMcpServersAsync()
@@ -81,20 +133,56 @@ public sealed class DesktopAgentHost : IAsyncDisposable
 
     public async Task NotifyApiInfoAsync()
     {
+        ReloadConfig();
         var loggedIn = !string.IsNullOrWhiteSpace(_config.WebUserToken);
-        await _web.PostToPageAsync(new
+        Chat2ApiHealth? health = null;
+        try
+        {
+            health = await _pages.ProbeChat2ApiHealthAsync(_config.WebUserToken, _localApi.BaseUrl);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        var snap = Chat2ApiProviderService.Build(_config, health);
+        Chat2ApiProviderService.WriteIntegrationFile(_config, health);
+
+        await _pages.PostToPageAsync(new
         {
             type = "apiInfo",
-            url = _localApi.BaseUrl,
+            url = snap.Chat2ApiBaseUrl,
             model = _config.Model,
             loggedIn,
             workMode = _config.DefaultWorkMode,
             agentStrategy = _config.DefaultAgentStrategy,
             hint = loggedIn
-                ? (_config.DefaultWorkMode == "plan"
-                    ? "计划模式：Qwen Code Core 规划 → 子 Agent + 工具"
-                    : "Agent 模式：DeepSeek 外壳 + Qwen Code Core（C# 移植）")
-                : "请先在网页登录以启用 Agent"
+                ? "网页会话已接入 Chat2API → DeepSeek-TUI，可使用 deepseek-v4-pro 等官方模型 ID"
+                : "请先在普通对话登录 DeepSeek 网页",
+            agentEngine = "deepseek-tui",
+            provider = new
+            {
+                snap.Name,
+                snap.Type,
+                snap.Online,
+                snap.AuthType,
+                snap.ModelCount,
+                snap.AccountOnline,
+                snap.AccountTotal
+            },
+            chat2api = new
+            {
+                baseUrl = snap.Chat2ApiBaseUrl,
+                apiKey = snap.ApiKeyForClients,
+                apiKeyMasked = snap.ApiKeyMasked,
+                authType = snap.AuthType
+            },
+            deepseekTui = new
+            {
+                runtimeUrl = snap.TuiRuntimeUrl,
+                configPath = snap.TuiConfigPath,
+                integrationFile = snap.IntegrationFilePath
+            }
         });
     }
 
@@ -124,17 +212,28 @@ public sealed class DesktopAgentHost : IAsyncDisposable
             case "openSettings":
                 Application.Current.Dispatcher.Invoke(() => OpenSettings());
                 break;
+            case "openChat2Api":
+                Application.Current.Dispatcher.Invoke(OpenChat2Api);
+                break;
             case "openAgentWorkspace":
                 Application.Current.Dispatcher.Invoke(EnsureAgentWindow);
                 break;
             case "showProviderCard":
                 await NotifyApiInfoAsync();
-                await _web.PostToPageAsync(new
                 {
-                    type = "showProviderCard",
-                    url = _localApi.BaseUrl,
-                    loggedIn = !string.IsNullOrWhiteSpace(_config.WebUserToken)
-                });
+                    var snap = Chat2ApiProviderService.Build(_config);
+                    await _pages.PostToPageAsync(new
+                    {
+                        type = "showProviderCard",
+                        url = snap.Chat2ApiBaseUrl,
+                        apiKey = snap.ApiKeyForClients,
+                        apiKeyMasked = snap.ApiKeyMasked,
+                        authType = snap.AuthType,
+                        modelCount = snap.ModelCount,
+                        tuiRuntimeUrl = snap.TuiRuntimeUrl,
+                        loggedIn = snap.Online
+                    });
+                }
                 break;
             case "setWorkMode":
                 if (msg.TryGetProperty("mode", out var modeEl))
@@ -144,7 +243,7 @@ public sealed class DesktopAgentHost : IAsyncDisposable
                     {
                         var toAgent = mode is "agent" or "plan";
                         await ApplyTokenFromMessageAsync(msg);
-                        if (toAgent && !_web.IsAgentHostPage)
+                        if (toAgent && !_pages.IsAgentVisible)
                             await SyncTokenFromPageAsync();
 
                         _config.DefaultWorkMode = mode;
@@ -162,18 +261,9 @@ public sealed class DesktopAgentHost : IAsyncDisposable
                                            && snEl.ValueKind == JsonValueKind.True;
 
                         if (NavigateToUrl is not null && !skipNavigate)
-                        {
-                            await Application.Current.Dispatcher.Invoke(async () =>
-                            {
-                                await NavigateToUrl(targetUrl);
-                                if (mode == "chat")
-                                    await _web.TriggerInjectAsync(forceReset: false);
-                            });
-                        }
+                            await NavigateForWorkModeAsync(targetUrl, mode);
                         else if (mode == "chat")
-                        {
-                            _ = _web.TriggerInjectAsync(forceReset: false);
-                        }
+                            await RunOnUiAsync(() => _pages.TriggerChatInjectAsync(forceReset: false));
 
                         await RefreshLoginStateAsync();
                         if (toAgent && !skipNavigate)
@@ -187,12 +277,7 @@ public sealed class DesktopAgentHost : IAsyncDisposable
                 _config.DefaultWorkMode = "agent";
                 ConfigStore.Save(_config);
                 if (NavigateToUrl is not null)
-                {
-                    await Application.Current.Dispatcher.Invoke(async () =>
-                    {
-                        await NavigateToUrl(AppNavigation.AgentPageUrl);
-                    });
-                }
+                    await NavigateForWorkModeAsync(AppNavigation.AgentPageUrl, "agent");
                 await RefreshLoginStateAsync();
                 _ = PushLoginStateAfterAgentNavAsync();
                 break;
@@ -200,10 +285,7 @@ public sealed class DesktopAgentHost : IAsyncDisposable
                 _config.DefaultWorkMode = "chat";
                 ConfigStore.Save(_config);
                 if (NavigateToUrl is not null)
-                {
-                    await Application.Current.Dispatcher.InvokeAsync(
-                        async () => await NavigateToUrl(AppNavigation.DeepSeekUrl));
-                }
+                    await NavigateForWorkModeAsync(AppNavigation.DeepSeekUrl, "chat");
                 break;
             case "agentRun":
                 var text = msg.TryGetProperty("text", out var tEl) ? tEl.GetString() : "";
@@ -226,9 +308,20 @@ public sealed class DesktopAgentHost : IAsyncDisposable
                     }
                 }
 
+                var sessionId = msg.TryGetProperty("sessionId", out var sidEl) ? sidEl.GetString() : null;
+                var tuiThreadId = msg.TryGetProperty("tuiThreadId", out var ttEl) ? ttEl.GetString() : null;
+                if (string.IsNullOrWhiteSpace(tuiThreadId) && !string.IsNullOrWhiteSpace(sessionId))
+                {
+                    var stored = _agentSessions.Load(sessionId!);
+                    tuiThreadId = stored?.TuiThreadId;
+                }
+
                 _ = RunAgentAsync(
                     text!, chatMode ?? "专家", deepThink, smartSearch, mcpOn,
-                    strategy ?? AgentStrategies.React, refIds);
+                    strategy ?? AgentStrategies.React, refIds, sessionId, tuiThreadId);
+                break;
+            case "agentStop":
+                _runCts?.Cancel();
                 break;
             case "agentStorageList":
                 await HandleAgentStorageListAsync(msg);
@@ -255,12 +348,12 @@ public sealed class DesktopAgentHost : IAsyncDisposable
         msg.TryGetProperty("reqId", out var r) ? r.GetString() : null;
 
     private Task PostStorageReplyAsync(string? reqId, object payload) =>
-        _web.PostToPageAsync(MergeReqId(reqId, payload));
+        _pages.PostToPageAsync(MergeReqId(reqId, payload));
 
     private static object MergeReqId(string? reqId, object payload)
     {
         if (string.IsNullOrEmpty(reqId)) return payload;
-        var json = JsonSerializer.Serialize(payload);
+        var json = JsonSerializer.Serialize(payload, AgentSessionJson.Options);
         using var doc = JsonDocument.Parse(json);
         var dict = new Dictionary<string, object?> { ["reqId"] = reqId };
         foreach (var prop in doc.RootElement.EnumerateObject())
@@ -397,7 +490,7 @@ public sealed class DesktopAgentHost : IAsyncDisposable
 
     public async Task SyncTokenFromChatPageAsync()
     {
-        if (_web.IsAgentHostPage)
+        if (_pages.IsAgentVisible)
             return;
 
         for (var attempt = 0; attempt < 10; attempt++)
@@ -426,7 +519,7 @@ public sealed class DesktopAgentHost : IAsyncDisposable
         {
             if (delay > 0)
                 await Task.Delay(delay);
-            if (!_web.IsAgentHostPage)
+            if (!_pages.IsAgentVisible)
                 return;
             await PushLoginStateAsync();
             await NotifyApiInfoAsync();
@@ -436,12 +529,47 @@ public sealed class DesktopAgentHost : IAsyncDisposable
     public async Task RefreshLoginStateAsync()
     {
         ReloadConfig();
-        if (!_web.IsAgentHostPage)
-            await SyncTokenFromPageAsync();
-        ReloadConfig();
-
-        await NotifyApiInfoAsync();
+        // 先用已保存的 token 更新 Agent 页，避免桥接未就绪时长期停在「检测中…」
         await PushLoginStateAsync();
+        await NotifyApiInfoAsync();
+
+        _ = RefreshLoginStateBackgroundAsync();
+    }
+
+    private async Task RefreshLoginStateBackgroundAsync()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_config.WebUserToken))
+                await _pages.SyncApiBridgeTokenAsync(_config.WebUserToken);
+
+            await SyncTokenFromBridgeOrChatAsync();
+            ReloadConfig();
+            await PushLoginStateAsync();
+            await NotifyApiInfoAsync();
+        }
+        catch
+        {
+            // 后台同步失败不影响已展示的登录状态
+        }
+    }
+
+    private async Task SyncTokenFromBridgeOrChatAsync()
+    {
+        try
+        {
+            var token = await _pages.TryReadUserTokenAsync();
+            if (string.IsNullOrWhiteSpace(token))
+                return;
+            var normalized = NormalizeUserToken(token);
+            if (string.IsNullOrWhiteSpace(normalized) || normalized == _config.WebUserToken)
+                return;
+            await ApplyWebUserTokenAsync(normalized);
+        }
+        catch
+        {
+            // 页面或桥接尚未就绪
+        }
     }
 
     public async Task PushLoginStateToPageAsync() => await PushLoginStateAsync();
@@ -450,8 +578,8 @@ public sealed class DesktopAgentHost : IAsyncDisposable
     {
         ReloadConfig();
         var loggedIn = !string.IsNullOrWhiteSpace(_config.WebUserToken);
-        await _web.PushAgentAuthHintAsync(loggedIn);
-        await _web.PostToPageAsync(new { type = "loginState", loggedIn });
+        await _pages.PushAgentAuthHintAsync(loggedIn);
+        await _pages.PostToPageAsync(new { type = "loginState", loggedIn });
     }
 
     private async Task ApplyTokenFromMessageAsync(JsonElement msg)
@@ -470,7 +598,7 @@ public sealed class DesktopAgentHost : IAsyncDisposable
             return;
         _config.WebUserToken = normalized;
         ConfigStore.Save(_config);
-        _localApi.UpdateConfig(_config);
+        await Chat2ApiStackBootstrap.OnWebLoginAsync(_config, _localApi, _tuiHost, _pages.Chat);
         await NotifyApiInfoAsync();
         await PushLoginStateAsync();
     }
@@ -498,10 +626,10 @@ public sealed class DesktopAgentHost : IAsyncDisposable
     {
         try
         {
-            if (_web.IsAgentHostPage)
+            if (_pages.IsAgentVisible)
                 return;
 
-            var raw = await _web.GetUserTokenAsync();
+            var raw = await _pages.GetUserTokenAsync();
             if (string.IsNullOrWhiteSpace(raw))
                 return;
             var token = NormalizeUserToken(raw);
@@ -517,16 +645,36 @@ public sealed class DesktopAgentHost : IAsyncDisposable
         }
     }
 
+    private void OpenChat2Api()
+    {
+        ReloadConfig();
+        var dlg = new Chat2ApiManagementWindow(_config, c =>
+        {
+            _config = c;
+            ConfigStore.Save(_config);
+            _localApi.UpdateConfig(_config);
+        })
+        { Owner = _owner };
+        dlg.ShowDialog();
+        ReloadConfig();
+        _localApi.UpdateConfig(_config);
+        _ = NotifyApiInfoAsync();
+    }
+
     private void OpenSettings()
     {
         var dlg = new DesktopSettingsWindow(_config, _mcpHub) { Owner = _owner };
-        if (dlg.ShowDialog() == true && dlg.Config is not null)
+        var saved = dlg.ShowDialog() == true;
+        if (saved && dlg.Config is not null)
         {
             _config = dlg.Config;
             ConfigStore.Save(_config);
-            _localApi.UpdateConfig(_config);
-            _ = NotifyApiInfoAsync();
         }
+        else
+            ReloadConfig();
+
+        _localApi.UpdateConfig(_config);
+        _ = NotifyApiInfoAsync();
     }
 
     private void EnsureAgentWindow()
@@ -546,7 +694,9 @@ public sealed class DesktopAgentHost : IAsyncDisposable
 
     private async Task RunAgentAsync(
         string task, string mode, bool deepThink, bool smartSearch, bool mcpOn, string strategy,
-        IReadOnlyList<string>? refFileIds = null)
+        IReadOnlyList<string>? refFileIds = null,
+        string? sessionId = null,
+        string? tuiThreadId = null)
     {
         _runCts?.Cancel();
         _runCts = new CancellationTokenSource();
@@ -565,25 +715,25 @@ public sealed class DesktopAgentHost : IAsyncDisposable
         AgentModeHelper.ApplyChatMode(_config, "专家", deepThink: true);
         deepThink = true;
         smartSearch = true;
-        _web.AgentRefFileIds = refFileIds ?? Array.Empty<string>();
+        _pages.AgentRefFileIds = refFileIds ?? Array.Empty<string>();
         ConfigStore.Save(_config);
         _localApi.UpdateConfig(_config);
 
         void Log(string line)
         {
             Application.Current.Dispatcher.Invoke(() => _agentWindow?.AppendLog(line));
-            _ = _web.PostToPageAsync(new { type = "agentLog", text = line });
+            _ = _pages.PostToPageAsync(new { type = "agentLog", text = line });
             if (line.StartsWith("Final Answer: ", StringComparison.OrdinalIgnoreCase))
             {
                 var ans = line["Final Answer: ".Length..].Trim();
                 if (!string.IsNullOrWhiteSpace(ans))
-                    _ = _web.PostToPageAsync(new { type = "agentAnswer", text = ans });
+                    _ = _pages.PostToPageAsync(new { type = "agentAnswer", text = ans });
             }
         }
 
         try
         {
-            await _web.PostToPageAsync(new { type = "agentStarted", task });
+            await _pages.PostToPageAsync(new { type = "agentStarted", task });
 
             if (string.IsNullOrWhiteSpace(_config.WebUserToken))
             {
@@ -591,36 +741,57 @@ public sealed class DesktopAgentHost : IAsyncDisposable
                 return;
             }
 
-            Log($"Qwen Code × DeepSeek：{_localApi.BaseUrl}/chat/completions → 网页 Token");
-            Log($"工作区: {QwenCodeBuiltinTools.ResolveWorkspaceRoot(_config)}");
+            Log($"DeepSeek-TUI → Chat2API {_localApi.BaseUrl}");
+            Log($"工作区: {AgentWorkspace.ResolveRoot(_config)}");
+            Log("MCP / Skills / 沙箱工具由 DeepSeek-TUI 管理（~/.deepseek/）");
 
-            if (mcpOn)
+            var result = await GetTuiAgent().RunAsync(
+                _config, task, strategy, tuiThreadId, Log,
+                delta =>
+                {
+                    if (!string.IsNullOrEmpty(delta))
+                        _ = _pages.PostToPageAsync(new { type = "agentAnswer", text = delta, append = true });
+                },
+                ct);
+
+            var answer = result.Answer;
+            var summary = answer;
+
+            if (!string.IsNullOrWhiteSpace(sessionId))
             {
-                if (_config.EnableQwenCodeBuiltinTools)
-                    Log($"内置工具: {QwenCodeBuiltinTools.GetDescriptors(_config).Count} 个（read/write/glob/grep/shell）");
-
-                if (_mcpHub.ConnectedCount == 0)
-                    await ConnectMcpAsync(Log, ct);
+                var sess = _agentSessions.Load(sessionId) ?? new AgentSessionFile
+                {
+                    Id = sessionId,
+                    Title = "新对话",
+                    CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                };
+                sess.TuiThreadId = result.ThreadId;
+                sess.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                _agentSessions.Save(sess);
             }
 
-            var answer = await _qwenAgent.RunAsync(
-                _config, task, strategy, mcpOn, deepThink, smartSearch, Log, ct);
-            var summary = string.IsNullOrWhiteSpace(answer) ? "任务已结束" : answer;
-            await _web.PostToPageAsync(new { type = "agentDone", summary, answer });
+            await _pages.PostToPageAsync(new
+            {
+                type = "agentTuiThread",
+                sessionId,
+                tuiThreadId = result.ThreadId
+            });
+
+            await _pages.PostToPageAsync(new { type = "agentDone", summary, answer });
         }
         catch (OperationCanceledException)
         {
             Log("已停止。");
-            await _web.PostToPageAsync(new { type = "agentDone", summary = "已停止" });
+            await _pages.PostToPageAsync(new { type = "agentDone", summary = "已停止", answer = "" });
         }
         catch (Exception ex)
         {
             Log("错误: " + ex.Message);
-            await _web.PostToPageAsync(new { type = "agentDone", summary = "失败: " + ex.Message });
+            await _pages.PostToPageAsync(new { type = "agentDone", summary = "失败: " + ex.Message });
         }
         finally
         {
-            _web.AgentRefFileIds = Array.Empty<string>();
+            _pages.AgentRefFileIds = Array.Empty<string>();
             _agentWindow?.SetRunning(false);
         }
     }
@@ -636,10 +807,11 @@ public sealed class DesktopAgentHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _web.MessageReceived -= OnWebMessage;
+        _pages.MessageReceived -= OnWebMessage;
         _runCts?.Cancel();
         _runCts?.Dispose();
         _runCts = null;
         await _mcpHub.DisposeAsync();
+        await _tuiHost.DisposeAsync();
     }
 }

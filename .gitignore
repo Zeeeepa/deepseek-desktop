@@ -23,5 +23,9 @@ appsettings.*.json
 tools/**/bin/
 tools/**/obj/
 
+# DeepSeek-TUI binaries (build.ps1 downloads or -UseLocalTui)
+Assets/tools/*.exe
+Assets/tools/version.txt
+
 # Empty placeholder
 Assets/WebInject/

@@ -14,6 +14,8 @@
         Closing="Window_Closing">
   <Grid>
     <wv2:WebView2 x:Name="WebView"/>
+    <wv2:WebView2 x:Name="AgentWebView" Visibility="Collapsed"/>
+    <wv2:WebView2 x:Name="BridgeWebView" Width="0" Height="0" Visibility="Collapsed" IsHitTestVisible="False"/>
     <Border x:Name="LoadingOverlay" Background="{StaticResource DsBg}">
       <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="320">
         <Image Width="64" Height="64" Margin="0,0,0,24"

@@ -85,7 +85,7 @@ public partial class McpServerEditorWindow : System.Windows.Window
     {
         if (string.IsNullOrWhiteSpace(NameBox.Text))
         {
-            MessageBox.Show("请填写名称。", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DsMessageDialog.Warning(this, "请填写名称。", "提示");
             return;
         }
 
@@ -94,20 +94,20 @@ public partial class McpServerEditorWindow : System.Windows.Window
         {
             if (string.IsNullOrWhiteSpace(UrlBox.Text))
             {
-                MessageBox.Show("请填写远程 MCP 的 URL。", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+                DsMessageDialog.Warning(this, "请填写远程 MCP 的 URL。", "提示");
                 return;
             }
 
             if (!Uri.TryCreate(UrlBox.Text.Trim(), UriKind.Absolute, out var uri)
                 || uri.Scheme is not "http" and not "https")
             {
-                MessageBox.Show("URL 须为 http:// 或 https:// 开头的完整地址。", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+                DsMessageDialog.Warning(this, "URL 须为 http:// 或 https:// 开头的完整地址。", "提示");
                 return;
             }
         }
         else if (string.IsNullOrWhiteSpace(CommandBox.Text))
         {
-            MessageBox.Show("请填写启动命令。", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DsMessageDialog.Warning(this, "请填写启动命令。", "提示");
             return;
         }
 
