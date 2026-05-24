@@ -5,9 +5,9 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v1.2.1 (template)
+## [Unreleased] — template
 
-> Copy this section when preparing the next release. Replace placeholders and move items from **Added / Changed / Fixed** as needed.
+> Copy this section when preparing the next release.
 
 ### Added
 
@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Known issues
 
 - <!-- e.g. Workaround or limitation -->
+
+---
+
+## [1.2.1] - 2026-05-24
+
+### Changed
+
+- README / DISCLAIMER：架构说明改为 **DeepSeek-TUI**，移除 Qwen Code 文档链接
+- Skills 路径说明改为 `~/.deepseek/skills`
+- 新增 `CHANGELOG.md`
 
 ---
 
@@ -75,5 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Some Chat2API UI features remain stubbed (logs/stats, multi-provider CRUD, tool calling)
 - WinUI 3 shell requires a working Windows App Runtime; WPF is recommended for daily use
 
+[1.2.1]: https://github.com/fanstars2318/deepseek-desktop/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/fanstars2318/deepseek-desktop/compare/V1.0.0...v1.2.0
-[Unreleased]: https://github.com/fanstars2318/deepseek-desktop/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/fanstars2318/deepseek-desktop/compare/v1.2.1...HEAD
