@@ -7,6 +7,21 @@
     localStorage.setItem("i18nextLng", "zh-CN");
   } catch (_) {}
 
+  (function ensureDefaultRoute() {
+    try {
+      var hash = location.hash || "";
+      if (
+        !hash ||
+        hash === "#" ||
+        hash === "#/" ||
+        hash.indexOf("#/proxy") === 0 ||
+        hash.indexOf("#/about") === 0
+      ) {
+        location.replace(location.pathname + location.search + "#/providers");
+      }
+    } catch (_) {}
+  })();
+
   var pending = new Map();
   var seq = 0;
   var eventSubs = new Map();

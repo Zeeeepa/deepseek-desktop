@@ -9,7 +9,11 @@ public static class DeepSeekDesktopApp
 {
     public const string AppDataFolderName = "deepseek_desktop";
     public const string LegacyAppDataFolderName = "DeepSeekEdge";
+    /// <summary>可选：复制 publish 到桌面时的文件夹名（需 build.ps1 -DeployToDesktop）。</summary>
     public const string DesktopInstallFolderName = "DeepSeek_desktop";
+
+    /// <summary>仓库内唯一编译发布目录名（相对仓库根目录）。</summary>
+    public const string PublishFolderName = "publish";
     public const string DisplayName = "DeepSeek Desktop";
     public const string JsLogPrefix = "DeepSeek Desktop";
 
@@ -21,6 +25,8 @@ public static class DeepSeekDesktopApp
 
     public const string VerifyAgentEnvVar = "DEEPSEEK_DESKTOP_VERIFY_AGENT";
     public const string LegacyVerifyAgentEnvVar = "DEEPSEEK_EDGE_VERIFY_AGENT";
+
+    public const string VerifyAgentTaskEnvVar = "DEEPSEEK_DESKTOP_VERIFY_AGENT_TASK";
 
     public const string VerifyShutdownEnvVar = "DEEPSEEK_DESKTOP_VERIFY_SHUTDOWN";
 

@@ -1,5 +1,4 @@
 using DeepSeekBrowser.Models;
-using DeepSeekBrowser.Services.DeepSeekTui;
 
 namespace DeepSeekBrowser.Services;
 
@@ -14,7 +13,7 @@ public static class EmbeddedStackBridgeLinker
         CancellationToken ct = default)
     {
         Chat2ApiCompat.EnsureDefaultMappings(config);
-        DeepSeekTuiConfigSync.Apply(config);
+        AgentDesktopConfigSync.Apply(config);
 
         if (string.IsNullOrWhiteSpace(config.WebUserToken))
             return;

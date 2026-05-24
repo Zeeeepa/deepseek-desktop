@@ -94,8 +94,11 @@ button.ds-agent-mode-float-btn {
   z-index: 2147483647 !important;
   display: inline-flex !important;
   align-items: center !important;
+  justify-content: center !important;
   gap: 6px !important;
   height: 34px !important;
+  line-height: 1 !important;
+  box-sizing: border-box !important;
   padding: 0 14px !important;
   border-radius: var(--ds-radius-pill, 9999px) !important;
   border: 1px solid var(--ds-border, #e5e7eb) !important;
@@ -124,6 +127,13 @@ button.ds-agent-mode-float-btn {
 
 #ds-agent-mode-float.ds-agent-mode-float.ds-on .ds-native-icon {
   color: var(--ds-blue, #4d6bfe) !important;
+}
+
+#ds-agent-mode-float.ds-agent-mode-float .ds-native-label,
+#ds-agent-mode-float.ds-agent-mode-float #ds-agent-mode-float-label {
+  line-height: 1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
 }
 
 .ds-mode-wrap {

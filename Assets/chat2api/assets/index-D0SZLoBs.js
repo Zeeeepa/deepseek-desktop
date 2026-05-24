@@ -17013,9 +17013,10 @@ const useSettingsStore = create()(
     }),
     {
       name: "chat2api-settings",
-      onRehydrateStorage: () => () => {
-        instance.changeLanguage("zh-CN");
-      }
+      onRehydrateStorage: () => (state) => {
+        if (state?.language) {
+          instance.changeLanguage(state.language);
+        }
       }
     }
   )
@@ -21123,7 +21124,7 @@ function ThemeProvider({ children }) {
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, [theme]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children });
+  return children;
 }
 client.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React$1.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ThemeProvider, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(HashRouter, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) }) }) }) })

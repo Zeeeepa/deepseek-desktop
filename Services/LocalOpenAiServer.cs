@@ -294,45 +294,51 @@ public sealed class LocalOpenAiServer : IDisposable
             stream: true);
 
         WebChatResult? finalResult = null;
-        try
+        await foreach (var ev in _web.WebChatStreamAsync(
+                           req.Messages,
+                           req.ResolvedModel,
+                           useThinking,
+                           req.WebSearch,
+                           CancellationToken.None,
+                           _config.WebUserToken,
+                           req.WebChatSessionId))
         {
-            await foreach (var ev in _web.WebChatStreamAsync(
-                               req.Messages,
-                               req.ResolvedModel,
-                               useThinking,
-                               req.WebSearch,
-                               CancellationToken.None,
-                               _config.WebUserToken,
-                               req.WebChatSessionId))
+            if (firstChunk && ev is not WebChatStreamDone)
             {
-                if (firstChunk && ev is not WebChatStreamDone)
-                {
-                    firstChunk = false;
-                    dbg?.Write("CHAT2API", "流式首包到达");
-                }
+                firstChunk = false;
+                dbg?.Write("CHAT2API", "流式首包到达");
+            }
 
-                if (ev is WebChatStreamDone done)
-                    finalResult = done.Result;
-                yield return ev;
-            }
+            if (ev is WebChatStreamDone done)
+                finalResult = done.Result;
+            yield return ev;
         }
-        finally
+
+        if (finalResult is null && Chat2ApiFeatureScope.HasActiveAgentRun)
         {
-            _web.AgentRefFileIds = prevRefIds;
-            if (chatSw is not null)
+            finalResult = new WebChatResult
             {
-                chatSw.Stop();
-                var chars = finalResult?.Content?.Length ?? 0;
-                var reasoning = finalResult?.ReasoningContent?.Length ?? 0;
-                var note = finalResult is null
-                    ? "stream ended without done"
-                    : (reasoning > 0 ? $"reasoningChars={reasoning}" : null);
-                dbg?.LogChat2ApiDone(
-                    req.ResolvedModel,
-                    chatSw.ElapsedMilliseconds,
-                    chars + reasoning,
-                    note);
-            }
+                Content = "未能从网页会话获取回复，请确认已在「普通对话」登录 DeepSeek 后重试。",
+                Model = req.ResolvedModel,
+                FinishReason = "stop"
+            };
+            yield return new WebChatStreamDone(finalResult);
+        }
+
+        _web.AgentRefFileIds = prevRefIds;
+        if (chatSw is not null)
+        {
+            chatSw.Stop();
+            var chars = finalResult?.Content?.Length ?? 0;
+            var reasoning = finalResult?.ReasoningContent?.Length ?? 0;
+            var note = finalResult is null
+                ? "stream ended without done"
+                : (reasoning > 0 && chars == 0 ? $"reasoningChars={reasoning}" : null);
+            dbg?.LogChat2ApiDone(
+                req.ResolvedModel,
+                chatSw.ElapsedMilliseconds,
+                chars + reasoning,
+                note);
         }
 
         if (finalResult is not null &&

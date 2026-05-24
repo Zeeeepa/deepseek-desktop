@@ -35,7 +35,7 @@ public sealed partial class AgentPage : Page
         _vm.InputText = InputBox.Text;
         _vm.DeepThinking = DeepThinkToggle.IsOn;
         _vm.WebSearch = WebSearchToggle.IsOn;
-        _vm.Strategy = StrategyBox.SelectedIndex == 1 ? AgentStrategies.Plan : AgentStrategies.React;
+        _vm.Strategy = StrategyBox.SelectedIndex == 1 ? AgentStrategies.Blueprint : AgentStrategies.Execute;
         await _vm.SendAsync();
         InputBox.Text = "";
     }

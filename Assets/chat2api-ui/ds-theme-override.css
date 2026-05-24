@@ -279,8 +279,10 @@ html.ds-console [data-ds-hidden="1"] {
   display: none !important;
 }
 
+.ds-desktop-stack-bar,
+#ds-desktop-stack-bar,
 #ds-embedded-banner {
-  flex-shrink: 0;
+  display: none !important;
 }
 
 main img[alt*="Logo"],

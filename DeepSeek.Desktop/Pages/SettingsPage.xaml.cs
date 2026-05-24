@@ -1,7 +1,6 @@
 using DeepSeek.Desktop.Services;
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
-using DeepSeekBrowser.Services.DeepSeekTui;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
@@ -75,20 +74,10 @@ public sealed partial class SettingsPage : Page
         McpSummaryText.Text = $"{mcpEnabled} / {cfg.McpServers.Count} 个 MCP 服务器已启用";
     }
 
-    private async Task RefreshTuiStatusAsync()
+    private Task RefreshTuiStatusAsync()
     {
-        try
-        {
-            var cfg = ConfigStore.Load();
-            var ver = await DeepSeekTuiBundle.TryGetVersionAsync(cfg.DeepSeekTuiExecutablePath);
-            TuiStatusText.Text = ver is null
-                ? "DeepSeek Agent 运行时：未检测到（首次 Agent 任务时会自动下载）"
-                : $"DeepSeek Agent 运行时：{ver}（已就绪）";
-        }
-        catch (Exception ex)
-        {
-            TuiStatusText.Text = "运行时状态：" + ex.Message;
-        }
+        TuiStatusText.Text = "Agent Harness：进程内 C# 引擎（网页桥 + Chat2API）";
+        return Task.CompletedTask;
     }
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -108,7 +97,7 @@ public sealed partial class SettingsPage : Page
         AppHost.Instance.SaveConfig(cfg);
         if (cfg.EnableExternalOpenAiApi)
             AppHost.Instance.ExternalApi?.EnsureExternalApiListening();
-        DeepSeekTuiConfigSync.Apply(cfg);
+        AgentDesktopConfigSync.Apply(cfg);
         StatusText.Text = "已保存";
         LoadFields();
     }

@@ -1,0 +1,245 @@
+.au-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 20px 20px 40px;
+  color: var(--ds-title, #0f172a);
+  font-family: var(--ds-font, system-ui, sans-serif);
+}
+
+.au-hero {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+  border: 1px solid var(--ds-border, #e2e8f0);
+}
+
+.au-flow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.au-flow-col {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.au-flow-op {
+  font-size: 18px;
+  color: #64748b;
+}
+
+.au-pill {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.au-pill-trigger {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.au-pill-action {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.au-chip {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+}
+
+.au-hero h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.au-hero p {
+  margin: 0;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.au-hero a {
+  color: #4d6bfe;
+}
+
+.au-webhook-hint {
+  margin-top: 8px !important;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.au-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.au-btn {
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--ds-border, #e2e8f0);
+  background: #fff;
+  cursor: pointer;
+}
+
+.au-btn-primary {
+  background: #4d6bfe;
+  color: #fff;
+  border-color: #4d6bfe;
+}
+
+.au-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.au-card {
+  border: 1px solid var(--ds-border, #e2e8f0);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.au-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.au-card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.au-card-meta {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.au-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.au-card-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.au-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.au-empty {
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+  padding: 24px;
+}
+
+.au-editor {
+  margin-top: 24px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--ds-border, #e2e8f0);
+  background: #fafafa;
+}
+
+.au-editor-title {
+  margin: 0 0 14px;
+  font-size: 17px;
+}
+
+.au-field {
+  margin-bottom: 12px;
+}
+
+.au-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #334155;
+}
+
+.au-field input,
+.au-field select,
+.au-field textarea {
+  width: 100%;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+.au-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.au-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.au-hook-url {
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+  color: #475569;
+}
+
+.au-runs {
+  margin-top: 24px;
+}
+
+.au-runs-title {
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+
+.au-run {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.au-run.ok { color: #15803d; }
+.au-run.fail { color: #b91c1c; }
+
+.au-status-on {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.au-status-off {
+  color: #94a3b8;
+}

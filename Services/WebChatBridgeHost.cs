@@ -12,6 +12,8 @@ namespace DeepSeekBrowser.Services;
 /// </summary>
 public sealed class WebChatBridgeHost
 {
+    private static readonly SemaphoreSlim AgentStreamGate = new(1, 1);
+
     private readonly WebView2 _webView;
     private readonly ConcurrentDictionary<string, WebChatStreamHub> _streamHubs = new();
     private TaskCompletionSource<bool> _readyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -283,7 +285,8 @@ public sealed class WebChatBridgeHost
         IReadOnlyList<string> refFileIds,
         CancellationToken ct,
         string? webUserToken = null,
-        string? webChatSessionId = null) =>
+        string? webChatSessionId = null,
+        bool allowToolCalls = false) =>
         RunOnUiAsync(async () =>
         {
             await EnsureReadyAsync(ct);
@@ -300,7 +303,7 @@ public sealed class WebChatBridgeHost
                 modelType = "expert",
                 refFileIds = refFileIds.ToArray(),
                 chatSessionId = webChatSessionId,
-                suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
+                suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun && !allowToolCalls
             });
             var expr =
                 $"window.dsDesktopBridge.webChatCompletion({msgJson}, {JsonSerializer.Serialize(model)}, {optsJson})";
@@ -317,7 +320,38 @@ public sealed class WebChatBridgeHost
         IReadOnlyList<string> refFileIds,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct,
         string? webUserToken = null,
-        string? webChatSessionId = null)
+        string? webChatSessionId = null,
+        bool allowToolCalls = false)
+    {
+        var agentSerialized = Chat2ApiFeatureScope.HasActiveAgentRun;
+        if (agentSerialized)
+            await AgentStreamGate.WaitAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            await foreach (var ev in WebChatStreamCoreAsync(
+                               messages, model, thinking, search, refFileIds, ct, webUserToken, webChatSessionId,
+                               allowToolCalls)
+                               .ConfigureAwait(false))
+                yield return ev;
+        }
+        finally
+        {
+            if (agentSerialized)
+                AgentStreamGate.Release();
+        }
+    }
+
+    private async IAsyncEnumerable<WebChatStreamEvent> WebChatStreamCoreAsync(
+        IReadOnlyList<ChatMessage> messages,
+        string model,
+        bool thinking,
+        bool search,
+        IReadOnlyList<string> refFileIds,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct,
+        string? webUserToken = null,
+        string? webChatSessionId = null,
+        bool allowToolCalls = false)
     {
         await EnsureReadyAsync(ct);
         await RunOnUiAsync(async () =>
@@ -343,7 +377,7 @@ public sealed class WebChatBridgeHost
             modelType = "expert",
             refFileIds = refFileIds.ToArray(),
             chatSessionId = webChatSessionId,
-            suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
+            suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun && !allowToolCalls
         });
         var streamIdJson = JsonSerializer.Serialize(hub.StreamId);
         var modelJson = JsonSerializer.Serialize(model);
@@ -389,6 +423,23 @@ public sealed class WebChatBridgeHost
         finally
         {
             stallCts.Cancel();
+            try
+            {
+                if (!hub.IsScriptCompleted)
+                {
+                    await hub.WaitForScriptCompletedAsync(TimeSpan.FromMinutes(2), CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (TimeoutException)
+            {
+                hub.PushError("网页 Chat 流超时：请确认已在「普通对话」登录 DeepSeek 后重试。");
+            }
+            catch
+            {
+                // stream already failed or consumer cancelled
+            }
+
             _streamHubs.TryRemove(hub.StreamId, out _);
             hub.Dispose();
         }

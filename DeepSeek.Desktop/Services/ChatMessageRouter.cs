@@ -1,7 +1,6 @@
 using System.Text.Json;
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
-using DeepSeekBrowser.Services.DeepSeekTui;
 using Microsoft.UI.Xaml.Controls;
 
 namespace DeepSeek.Desktop.Services;
@@ -94,7 +93,7 @@ public sealed class ChatMessageRouter
         cfg.WebUserToken = normalized;
         ConfigStore.Save(cfg);
         AppHost.Instance.SaveConfig(cfg);
-        DeepSeekTuiConfigSync.Apply(cfg);
+        AgentDesktopConfigSync.Apply(cfg);
 
         var inject = AppHost.Instance.ChatInject;
         if (inject is not null)

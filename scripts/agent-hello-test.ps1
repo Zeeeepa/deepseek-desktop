@@ -5,20 +5,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "Get-PublishDir.ps1")
 $appData = Join-Path $env:LOCALAPPDATA "deepseek_desktop"
 
 if (-not $ExePath) {
-    $candidates = @(
-        (Join-Path $env:USERPROFILE "Desktop\DeepSeek_desktop\DeepSeek.exe"),
-        (Join-Path $root "publish\DeepSeek.exe")
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { $ExePath = $c; break }
-    }
+    $ExePath = Get-DeepSeekPublishExe -RepoRoot $root
 }
 
 if (-not (Test-Path $ExePath)) {
-    throw "agent-hello-test: executable not found. Run build.ps1 first."
+    throw "agent-hello-test: executable not found at publish\DeepSeek.exe. Run .\build.ps1 first."
 }
 
 $cfgPath = Join-Path $appData "config.json"
@@ -34,14 +29,11 @@ if ([string]::IsNullOrWhiteSpace($cfg.webUserToken)) {
     throw "agent-hello-test: webUserToken empty — open DeepSeek, login on chat page, then retry"
 }
 
-$tuiDir = Join-Path (Split-Path $ExePath -Parent) "Assets\tools"
-foreach ($name in @("deepseek.exe", "deepseek-tui.exe")) {
-    $p = Join-Path $tuiDir $name
-    if (-not (Test-Path $p)) { throw "missing TUI binary: $p" }
-    if ((Get-Item $p).Length -lt 1000000) { throw "TUI binary too small (corrupt?): $p" }
-    $null = & $p --version 2>&1
-    if ($LASTEXITCODE -ne 0 -and -not $?) { throw "$name --version failed" }
+$harnessSrc = Join-Path $root "DeepSeek.Core\Services\Harness\DeepSeekHarnessRunner.cs"
+if (-not (Test-Path $harnessSrc)) {
+    throw "agent-hello-test: native Harness sources missing"
 }
+Write-Host "agent-hello-test: using native C# Harness (no deepseek-tui.exe)"
 
 $logDir = Join-Path $appData "logs"
 if (-not (Test-Path $logDir)) {

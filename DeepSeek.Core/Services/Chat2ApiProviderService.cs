@@ -2,12 +2,10 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using DeepSeekBrowser.Models;
-using DeepSeekBrowser.Services.DeepSeekTui;
-
 namespace DeepSeekBrowser.Services;
 
 /// <summary>
-/// 桌面端 Chat2API 供应商快照：网页 User Token → 本地 OpenAI 兼容 API → DeepSeek-TUI。
+/// 桌面端 Chat2API 供应商快照：网页 User Token → 本地 OpenAI 兼容 API → 进程内 Harness。
 /// 对齐 Chat2API 文档、DeepSeek 官方 API 模型名与 deepseek-tui.com 配置方式。
 /// </summary>
 public static class Chat2ApiProviderService
@@ -43,8 +41,6 @@ public static class Chat2ApiProviderService
         var loggedIn = !string.IsNullOrWhiteSpace(config.WebUserToken);
         var online = loggedIn && (health?.CanChat ?? loggedIn);
         var apiKey = ResolveApiKeyForClients(config);
-        var tuiPort = config.DeepSeekTuiRuntimePort > 0 ? config.DeepSeekTuiRuntimePort : DeepSeekTuiHost.DefaultPort;
-
         return new ProviderSnapshot(
             Id: Chat2ApiEmbedded.ProviderId,
             Name: "DeepSeek",
@@ -59,8 +55,8 @@ public static class Chat2ApiProviderService
             Chat2ApiBaseUrl: baseUrl,
             ApiKeyForClients: apiKey,
             ApiKeyMasked: MaskCredential(apiKey),
-            TuiRuntimeUrl: $"http://127.0.0.1:{tuiPort}",
-            TuiConfigPath: DeepSeekTuiConfigSync.ConfigPath,
+            TuiRuntimeUrl: "native://harness",
+            TuiConfigPath: AgentDesktopConfigSync.ConfigPath,
             IntegrationFilePath: IntegrationFilePath);
     }
 

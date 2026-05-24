@@ -537,8 +537,12 @@
 
   function buildChatResult(content, thinking, sessionId, model, opts) {
     const suppressTools = !!(opts && opts.suppressToolCalls);
+    let mainContent = (content || "").trim();
+    if (!mainContent && suppressTools && thinking) {
+      mainContent = String(thinking).trim();
+    }
     const parsed = suppressTools
-      ? { content: (content || "").trim(), toolCalls: [] }
+      ? { content: mainContent, toolCalls: [] }
       : parseToolCalls(content);
     const textOut = parsed.toolCalls.length ? null : parsed.content || "(无回复)";
     const likelyTruncated = detectLikelyTruncated(textOut);

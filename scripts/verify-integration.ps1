@@ -4,7 +4,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-if (-not $PublishDir) { $PublishDir = Join-Path $root "publish" }
+. (Join-Path $PSScriptRoot "Get-PublishDir.ps1")
+if (-not $PublishDir) { $PublishDir = Get-DeepSeekPublishDir -RepoRoot $root }
 
 function Assert-File($path, $label) {
     if (-not (Test-Path $path)) { throw "missing $label : $path" }
@@ -15,27 +16,13 @@ Write-Host "verify-integration: publish dir $PublishDir"
 Assert-File (Join-Path $PublishDir "DeepSeek.exe") "main exe"
 Assert-File (Join-Path $PublishDir "Assets\inject\bridge.js") "inject bridge"
 Assert-File (Join-Path $PublishDir "Assets\inject\overlay.js") "inject overlay"
-Assert-File (Join-Path $PublishDir "Assets\tools\deepseek.exe") "TUI dispatcher"
+$harnessSrc = Join-Path $root "DeepSeek.Core\Services\Harness\DeepSeekHarnessRunner.cs"
+Assert-File $harnessSrc "native Harness sources"
+Write-Host "  OK native Harness (no deepseek-tui.exe required)"
 
-$tuiRuntime = Join-Path $PublishDir "Assets\tools\deepseek-tui.exe"
-Assert-File $tuiRuntime "TUI runtime"
-$runtimeSize = (Get-Item $tuiRuntime).Length
-if ($runtimeSize -lt 30000000) {
-    throw "TUI runtime too small ($runtimeSize bytes), likely corrupt download"
-}
-try {
-    $ver = & $tuiRuntime --version 2>&1 | Select-Object -First 1
-    if (-not $ver) { throw "deepseek-tui --version returned empty" }
-    Write-Host "  OK TUI runtime version: $ver"
-} catch {
-    throw "TUI runtime --version failed: $_"
-}
-
-$submoduleRoot = Join-Path $root "third-party\DeepSeek-TUI"
-if (Test-Path (Join-Path $submoduleRoot "Cargo.toml")) {
-    Write-Host "  OK DeepSeek-TUI submodule present"
-} else {
-    Write-Warning "third-party/DeepSeek-TUI not initialized (git submodule update --init)"
+$legacyTui = Join-Path $PublishDir "Assets\tools\deepseek-tui.exe"
+if (Test-Path $legacyTui) {
+    Write-Warning "legacy deepseek-tui.exe still present in publish (optional)"
 }
 
 Assert-File (Join-Path $PublishDir "Assets\chat2api\index.html") "Chat2API console UI"
@@ -51,9 +38,27 @@ function Assert-TextFileContains {
 $agentIndex = Join-Path $PublishDir "Assets\agent\index.html"
 $agentApp = Join-Path $PublishDir "Assets\agent\agent-app.js"
 $settingsEmbed = Join-Path $PublishDir "Assets\agent\settings-embed.js"
-Assert-TextFileContains $agentIndex "btn-chat2api" "Agent settings menu (API 管理 button)"
-Assert-TextFileContains $agentApp 'chat2api: "https://ds-chat2api.local/index.html"' "Agent embedded Chat2API URL"
-Assert-TextFileContains $agentApp "openEmbeddedPanel(`"chat2api`")" "Agent embedded Chat2API open"
+Assert-TextFileContains $agentIndex "slash-palette" "Agent slash command palette"
+Assert-TextFileContains $agentApp "slashPaletteHandleKeydown" "Agent slash palette keyboard"
+Assert-TextFileContains $agentIndex "ctx-workspace" "Agent context bar workspace chip"
+Assert-TextFileContains $agentApp "agentWorkspaceGet" "Agent workspace IPC"
+Assert-TextFileContains $agentApp "initWorkspaceUi" "Agent workspace UI init"
+Assert-TextFileContains $agentIndex "session-list" "Agent sidebar session list"
+Assert-TextFileContains $agentApp "openSessionMenu" "Agent session context menu"
+Assert-TextFileContains $agentApp "agentSessionList" "Agent session native storage"
+Assert-TextFileContains $agentApp "agentHarnessState" "Agent harness state sync"
+$autoEmbed = Join-Path $PublishDir "Assets\agent\automations-embed.html"
+$autoJs = Join-Path $PublishDir "Assets\agent\automations-embed.js"
+Assert-File $autoEmbed "Agent automations embed"
+Assert-TextFileContains $agentIndex "auto-intro" "Agent automations intro modal"
+Assert-TextFileContains $agentIndex "message-render.js" "Agent message render"
+Assert-TextFileContains $agentIndex "katex" "Agent KaTeX math"
+Assert-TextFileContains $agentApp 'openEmbeddedPanel("automations")' "Agent automations panel entry"
+Assert-TextFileContains $autoJs "agentAutomationsList" "Agent automations IPC"
+Assert-TextFileContains $autoJs "agentAutomationsTest" "Agent automations test run"
+Assert-TextFileContains $agentApp 'openEmbeddedPanel("chat2api")' "Agent API 管理 opens via same-origin iframe"
+Assert-File (Join-Path $PublishDir "Assets\agent\chat2api\index.html") "Agent same-origin Chat2API embed"
+Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\ds-ui-trim.js") "ds-agent-back-btn" "Chat2API Agent back button"
 Assert-TextFileContains $settingsEmbed "isInAgentIframe" "Settings embed iframe bridge"
 Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\webview-preload.js") "isInAgentIframe" "Chat2API embed iframe bridge"
 Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\webview-preload.js") "disabledUpdateStatus" "Chat2API update check disabled"
@@ -76,8 +81,9 @@ if ($chat2apiBundle) {
 }
 Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\ds-i18n-zh.js") "fixStoredLocale" "Chat2API Chinese locale helper"
 Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\ds-ui-trim.js") "hideLanguageControls" "Chat2API language settings hidden"
-Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\ds-desktop-stack.js") "deepseekDesktop" "Chat2API desktop stack banner"
-Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\index.html") "ds-desktop-stack.js" "Chat2API index loads desktop stack UI"
+Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\ds-desktop-stack.js") "removeStackBar" "Chat2API desktop stack bar removed"
+Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\ds-ui-trim.js") "removeStackBar" "Chat2API UI trim removes stack bar"
+Assert-TextFileContains (Join-Path $PublishDir "Assets\chat2api\ds-theme-override.css") "#ds-desktop-stack-bar" "Chat2API theme hides stack bar"
 
 $mainDll = Join-Path $PublishDir "DeepSeek.dll"
 if (Test-Path $mainDll) {
@@ -102,10 +108,16 @@ if (Test-Path $mainDll) {
             throw "Agent host missing HandleEmbeddedIpcInvokeAsync for embedded Chat2API"
         }
         if ($agentHost -notmatch 'SyncChat2ApiStackAsync') {
-            throw "Agent host missing SyncChat2ApiStackAsync for desktop/TUI linkage"
+            throw "Agent host missing SyncChat2ApiStackAsync for desktop stack linkage"
         }
-        if ($agentHost -notmatch 'OpenTuiConfigFile') {
-            throw "Agent host missing OpenTuiConfigFile for TUI config from Chat2API"
+        if ($agentHost -notmatch 'OpenAgentConfigFile') {
+            throw "Agent host missing OpenAgentConfigFile for ~/.deepseek config"
+        }
+        if ($agentHost -notmatch 'GetHarnessRunner') {
+            throw "Agent host missing native Harness runner"
+        }
+        if ($agentHost -notmatch 'EnsureAgentAndShowEmbeddedPanelAsync') {
+            throw "Agent host must open Chat2API via embedded panel (iframe)"
         }
         if ($agentHost -notmatch 'EnsureAgentScopedListening') {
             throw "RunAgentAsync path missing EnsureAgentScopedListening"

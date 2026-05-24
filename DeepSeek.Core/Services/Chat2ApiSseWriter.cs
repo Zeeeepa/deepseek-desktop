@@ -78,6 +78,15 @@ public static class Chat2ApiSseWriter
             }
         }
 
+        if (forTuiAgent && !sentContent)
+        {
+            if (!sentRole)
+                await WriteChunkAsync(output, id, created, model, new { role = "assistant" }, null, ct);
+            await WriteChunkAsync(output, id, created, model,
+                new { content = "未能从网页会话获取回复，请确认已在「普通对话」登录 DeepSeek 后重试。" },
+                null, ct);
+        }
+
         await WriteRawAsync(output, "data: [DONE]\n\n", ct);
     }
 

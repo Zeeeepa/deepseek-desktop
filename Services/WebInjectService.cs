@@ -36,7 +36,7 @@ public sealed class WebInjectService : IWebInjectBridge
     public Task EnsureApiBridgeReadyAsync(CancellationToken ct = default) =>
         _apiBridge?.EnsureReadyAsync(ct) ?? Task.CompletedTask;
 
-    public Task<Chat2ApiHealth> ProbeChat2ApiHealthAsync(string? configWebUserToken, string baseUrl,
+    public Task<Chat2ApiHealth?> ProbeChat2ApiHealthAsync(string? configWebUserToken, string baseUrl,
         CancellationToken ct = default) =>
         _apiBridge is null
             ? Task.FromResult(new Chat2ApiHealth
@@ -185,7 +185,7 @@ public sealed class WebInjectService : IWebInjectBridge
         var overlayCssPath = Path.Combine(baseDir, "overlay.css");
         if (!File.Exists(overlayCssPath))
             throw new FileNotFoundException(
-                $"缺少 {overlayCssPath}。请重新运行 build.ps1 完整部署到桌面 DeepSeek_desktop。", overlayCssPath);
+                $"缺少 {overlayCssPath}。请重新运行 .\\build.ps1，并从 .\\publish\\DeepSeek.exe 启动。", overlayCssPath);
 
         var overlayCss = File.ReadAllText(overlayCssPath);
         if (File.Exists(themePath))
@@ -200,11 +200,20 @@ public sealed class WebInjectService : IWebInjectBridge
     private void LoadAssets()
     {
         var assets = InjectAssets.Value;
-        _bridgeScript = assets.Bridge;
-        _workModeClientScript = assets.WorkModeClient;
+        _bridgeScript = GuardDocumentCreatedScript(assets.Bridge, "bridge");
+        _workModeClientScript = GuardDocumentCreatedScript(assets.WorkModeClient, "work-mode");
         _overlayScript = assets.Overlay;
         _overlayCss = assets.Css;
     }
+
+    /// <summary>Chat2API 内嵌 iframe 不注入官网桥脚本，避免破坏 React 首屏。</summary>
+    private static string GuardDocumentCreatedScript(string script, string name) =>
+        "(function(){try{"
+        + "var h=(location.hostname||'').toLowerCase(),p=location.pathname||'';"
+        + "if(h==='ds-chat2api.local')return;"
+        + "if(h==='ds-agent.local'&&p.indexOf('/chat2api/')!==-1)return;"
+        + script
+        + "}catch(e){console.warn('[DeepSeek Desktop] inject " + name + "',e);}})();";
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -240,6 +249,8 @@ public sealed class WebInjectService : IWebInjectBridge
     private Task PostWebMessageOnUiAsync(object message)
     {
         if (_webView.CoreWebView2 is null) return Task.CompletedTask;
+        if (message is Task)
+            throw new InvalidOperationException("Cannot post an unawaited Task to the WebView; await IPC handlers before replying.");
         _webView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, AgentSessionJson.Options));
         return Task.CompletedTask;
     }
@@ -468,13 +479,14 @@ public sealed class WebInjectService : IWebInjectBridge
         bool search,
         CancellationToken ct,
         string? webUserToken = null,
-        string? webChatSessionId = null)
+        string? webChatSessionId = null,
+        bool allowToolCalls = false)
     {
         if (_apiBridge is null)
             throw new InvalidOperationException("流式 Chat 需要 Chat2API 桥接 WebView，请重启应用。");
 
         return _apiBridge.WebChatStreamAsync(
-            messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId);
+            messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId, allowToolCalls);
     }
 
     public Task<WebChatResult> WebChatAsync(
@@ -484,8 +496,9 @@ public sealed class WebInjectService : IWebInjectBridge
         bool search,
         CancellationToken ct,
         string? webUserToken = null,
-        string? webChatSessionId = null) =>
-        RunOnUiAsync(() => WebChatOnUiAsync(messages, model, thinking, search, ct, webUserToken, webChatSessionId));
+        string? webChatSessionId = null,
+        bool allowToolCalls = false) =>
+        RunOnUiAsync(() => WebChatOnUiAsync(messages, model, thinking, search, ct, webUserToken, webChatSessionId, allowToolCalls));
 
     private async Task<WebChatResult> WebChatOnUiAsync(
         IReadOnlyList<ChatMessage> messages,
@@ -494,12 +507,13 @@ public sealed class WebInjectService : IWebInjectBridge
         bool search,
         CancellationToken ct,
         string? webUserToken,
-        string? webChatSessionId)
+        string? webChatSessionId,
+        bool allowToolCalls)
     {
         if (_apiBridge is not null)
         {
             return await _apiBridge.WebChatAsync(
-                messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId);
+                messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId, allowToolCalls);
         }
 
         var payload = new List<object>();

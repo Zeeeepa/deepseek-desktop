@@ -23,6 +23,11 @@ internal sealed class WebChatStreamHub : IDisposable
 
     public bool HasReceivedDelta { get; private set; }
 
+    public bool IsScriptCompleted => _scriptDone.Task.IsCompleted;
+
+    public Task WaitForScriptCompletedAsync(TimeSpan timeout, CancellationToken ct = default) =>
+        _scriptDone.Task.WaitAsync(timeout, ct);
+
     public void SignalScriptCompleted() => _scriptDone.TrySetResult();
 
     public void SignalScriptFailed(Exception ex) => _scriptDone.TrySetException(ex);

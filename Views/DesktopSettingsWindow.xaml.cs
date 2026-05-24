@@ -8,8 +8,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
-using DeepSeekBrowser.Services.DeepSeekTui;
-
+using DeepSeekBrowser.Services.Harness;
 namespace DeepSeekBrowser.Views;
 
 public partial class DesktopSettingsWindow : System.Windows.Window
@@ -29,10 +28,9 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         MaxStepsBox.Text = config.MaxAgentSteps.ToString();
         MaxSubStepsBox.Text = config.MaxSubAgentSteps.ToString();
         AgentStrategyCombo.Items.Clear();
-        AgentStrategyCombo.Items.Add("Agent 模式（多步工具）");
-        AgentStrategyCombo.Items.Add("Plan 模式（只读调研）");
-        AgentStrategyCombo.SelectedIndex = string.Equals(config.DefaultAgentStrategy, AgentStrategies.Plan,
-            StringComparison.OrdinalIgnoreCase)
+        AgentStrategyCombo.Items.Add("Execute（多步执行）");
+        AgentStrategyCombo.Items.Add("Blueprint（探索→蓝图）");
+        AgentStrategyCombo.SelectedIndex = HarnessStrategyResolver.IsBlueprintWorkflow(config.DefaultAgentStrategy)
             ? 1
             : 0;
         LocalApiUrlText.Text = $"http://127.0.0.1:{config.LocalApiPort}/v1";
@@ -41,8 +39,7 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         WebTokenStatus.Foreground = string.IsNullOrWhiteSpace(config.WebUserToken)
             ? (Brush)FindResource("DsDanger")
             : (Brush)FindResource("DsSuccess");
-        BindDeepSeekTuiSettings(config);
-        Loaded += async (_, _) => await RefreshDeepSeekTuiStatusAsync(config);
+        BindAgentHarnessSettings(config);
         BindChat2ApiSummary(config);
         RefreshMcpList();
     }
@@ -60,22 +57,14 @@ public partial class DesktopSettingsWindow : System.Windows.Window
             " · 网页登录后自动同步 Token";
     }
 
-    private void BindDeepSeekTuiSettings(AppConfig config)
+    private void BindAgentHarnessSettings(AppConfig config)
     {
-        var port = config.DeepSeekTuiRuntimePort > 0 ? config.DeepSeekTuiRuntimePort : 7878;
-        var bundled = DeepSeekTuiBundle.IsBundledComplete ? "已内置" : "未内置（将自动下载）";
-        var sourceRoot = DeepSeekTuiSourceBuild.ResolveRepositoryRoot(config);
-        var sourceHint = sourceRoot is null
-            ? "未检测到本地源码"
-            : (DeepSeekTuiSourceBuild.TryResolveReleaseBinaries(config) is not null
-                ? "已编译 release"
-                : "源码已找到，未编译");
         TuiPortInfoText.Text =
-            "DeepSeek-TUI Agent 引擎（内置）· Plan / Agent / YOLO\n" +
-            $"Runtime API：127.0.0.1:{port} · 二进制：{bundled} · 源码：{sourceHint}\n" +
-            "LLM：内嵌 Chat2API（网页 Token）→ ~/.deepseek/config.toml\n" +
-            "模式：/react → Agent · /plan → Plan";
-        TuiSourcePathBox.Text = config.DeepSeekTuiSourcePath ?? "";
+            "DSD Harness（C# 进程内）· Blueprint / Execute 工作流\n" +
+            "LLM：网页桥 + Chat2API（网页 Token）\n" +
+            "工具：内置文件/Shell + MCP · 配置：~/.deepseek/config.toml";
+        TuiSourcePathBox.Text = "";
+        TuiSourcePathBox.IsEnabled = false;
         AgentWorkspaceBox.Text = config.AgentWorkspaceRoot ?? "";
         AgentAllowShellCheck.IsChecked = config.AgentAllowShell;
         AdaptiveOutputCheck.IsChecked = config.EnableAdaptiveOutputEscalation;
@@ -379,9 +368,8 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         if (int.TryParse(MaxSubStepsBox.Text, out var subSteps))
             Config.MaxSubAgentSteps = Math.Clamp(subSteps, 1, 50);
         Config.DefaultAgentStrategy = AgentStrategyCombo.SelectedIndex == 1
-            ? AgentStrategies.Plan
-            : AgentStrategies.React;
-        Config.DeepSeekTuiSourcePath = TuiSourcePathBox.Text.Trim();
+            ? AgentStrategies.Blueprint
+            : AgentStrategies.Execute;
         Config.AgentWorkspaceRoot = AgentWorkspaceBox.Text.Trim();
         Config.AgentAllowShell = AgentAllowShellCheck.IsChecked == true;
         Config.EnableAdaptiveOutputEscalation = AdaptiveOutputCheck.IsChecked == true;
@@ -394,81 +382,31 @@ public partial class DesktopSettingsWindow : System.Windows.Window
         };
         Config.AgentAutoApproveReadOnly = Config.AgentApprovalMode is "smart" or "readonly";
         Config.McpServers = _mcpItems.ToList();
-        DeepSeekTuiConfigSync.Apply(Config);
+        AgentDesktopConfigSync.Apply(Config);
         ConfigStore.Save(Config);
         DialogResult = true;
         Close();
     }
 
-    private async Task RefreshDeepSeekTuiStatusAsync(AppConfig config)
-    {
-        try
-        {
-            await DeepSeekTuiBundle.EnsureBinariesAsync(config);
-            var ver = await DeepSeekTuiBundle.TryGetVersionAsync(config.DeepSeekTuiExecutablePath);
-            if (!string.IsNullOrWhiteSpace(ver))
-                TuiPortInfoText.Text += $"\n版本：{ver.Trim()}";
-            using var doc = await DeepSeekTuiBundle.TryDoctorJsonAsync(config.DeepSeekTuiExecutablePath);
-            if (doc is not null &&
-                doc.RootElement.TryGetProperty("api_key", out var key) &&
-                key.TryGetProperty("source", out var src))
-            {
-                TuiPortInfoText.Text += $"\ndoctor：api_key={src.GetString()}";
-            }
-        }
-        catch (Exception ex)
-        {
-            TuiPortInfoText.Text += "\n状态检测：" + ex.Message;
-        }
-    }
-
     private void OpenDeepSeekHome_Click(object sender, RoutedEventArgs e)
     {
-        var dir = DeepSeekTuiConfigSync.HomeDirectory;
+        var dir = AgentDesktopConfigSync.HomeDirectory;
         Directory.CreateDirectory(dir);
         Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
     }
 
-    private async void RunDeepSeekDoctor_Click(object sender, RoutedEventArgs e)
+    private void RunDeepSeekDoctor_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            await DeepSeekTuiBundle.EnsureBinariesAsync(Config);
-            if (Config is not null)
-                DeepSeekTuiConfigSync.Apply(Config);
-            using var doc = await DeepSeekTuiBundle.TryDoctorJsonAsync(Config?.DeepSeekTuiExecutablePath);
-            var text = doc is null ? "doctor 无输出，请确认已登录网页或配置 API。" : doc.RootElement.GetRawText();
-            DsMessageDialog.Info(this, text, "deepseek doctor --json");
-        }
-        catch (Exception ex)
-        {
-            DsMessageDialog.Warning(this, ex.Message, "doctor");
-        }
+        if (Config is not null)
+            AgentDesktopConfigSync.Apply(Config);
+        var loggedIn = !string.IsNullOrWhiteSpace(Config?.WebUserToken);
+        var text =
+            $"Harness: native (in-process)\n网页登录: {(loggedIn ? "是" : "否")}\n~/.deepseek: {AgentDesktopConfigSync.ConfigPath}";
+        DsMessageDialog.Info(this, text, "Agent 状态");
     }
 
-    private async void BuildDeepSeekTuiFromSource_Click(object sender, RoutedEventArgs e)
-    {
-        if (Config is null) Config = new AppConfig();
-        Config.DeepSeekTuiSourcePath = TuiSourcePathBox.Text.Trim();
-        var repo = DeepSeekTuiSourceBuild.ResolveRepositoryRoot(Config);
-        if (repo is null)
-        {
-            DsMessageDialog.Warning(this, "请填写有效的 DeepSeek-TUI 源码根目录（含 Cargo.toml）。", "编译 TUI");
-            return;
-        }
-
-        try
-        {
-            await DeepSeekTuiSourceBuild.BuildReleaseAsync(repo);
-            await DeepSeekTuiSourceBuild.TryCopyReleaseToToolsAsync(Config);
-            await RefreshDeepSeekTuiStatusAsync(Config);
-            DsMessageDialog.Info(this, "已编译并复制到 Assets/tools。\n请重新运行 build.ps1 部署桌面端，或重启应用。", "编译 TUI");
-        }
-        catch (Exception ex)
-        {
-            DsMessageDialog.Warning(this, ex.Message, "编译 TUI");
-        }
-    }
+    private void BuildDeepSeekTuiFromSource_Click(object sender, RoutedEventArgs e) =>
+        DsMessageDialog.Info(this, "Agent 已使用进程内 Harness，无需编译 DeepSeek-TUI。", "Agent 引擎");
 
     private void OpenDeepSeekDocs_Click(object sender, RoutedEventArgs e)
     {

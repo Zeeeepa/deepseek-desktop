@@ -56,7 +56,13 @@ public sealed class McpHub : IAsyncDisposable
         {
             try
             {
-                await ConnectAsync(server, log, ct);
+                using var perServer = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                perServer.CancelAfter(TimeSpan.FromSeconds(20));
+                await ConnectAsync(server, log, perServer.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                errors.Add($"{server.Name}: 连接超时（20s）");
             }
             catch (Exception ex)
             {
@@ -102,71 +108,90 @@ public sealed class McpHub : IAsyncDisposable
 
     public async Task ConnectAsync(McpServerConfig config, Action<string>? log, CancellationToken ct)
     {
+        ConnectedServer? replaced = null;
         await _gate.WaitAsync(ct);
         try
         {
-            if (_servers.ContainsKey(config.Id))
-                await DisconnectCoreAsync(config.Id);
+            if (_servers.Remove(config.Id, out var existing))
+                replaced = existing;
+        }
+        finally
+        {
+            _gate.Release();
+        }
 
-            log?.Invoke($"正在连接 MCP: {config.Name}…");
+        if (replaced is not null)
+            await replaced.Client.DisposeAsync();
 
-            McpClient client;
-            if (config.IsRemote)
+        log?.Invoke($"正在连接 MCP: {config.Name}…");
+
+        McpClient client;
+        if (config.IsRemote)
+        {
+            if (string.IsNullOrWhiteSpace(config.Url))
+                throw new InvalidOperationException($"远程 MCP「{config.Name}」未填写 URL。");
+
+            var endpoint = McpRemoteEndpoint.Resolve(config.Url);
+            if (!string.Equals(config.Url.Trim().TrimEnd('/'), endpoint.ToString().TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase))
             {
-                if (string.IsNullOrWhiteSpace(config.Url))
-                    throw new InvalidOperationException($"远程 MCP「{config.Name}」未填写 URL。");
-
-                var endpoint = McpRemoteEndpoint.Resolve(config.Url);
-                if (!string.Equals(config.Url.Trim().TrimEnd('/'), endpoint.ToString().TrimEnd('/'),
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    config.Url = endpoint.ToString();
-                    log?.Invoke($"已补全 MCP 路径: {endpoint}");
-                }
-
-                client = await ConnectRemoteWithRetryAsync(config.Name, endpoint, log, ct);
-            }
-            else
-            {
-                var env = config.Environment.ToDictionary(
-                    kv => kv.Key,
-                    kv => (string?)kv.Value,
-                    StringComparer.OrdinalIgnoreCase);
-
-                var transport = new StdioClientTransport(new StdioClientTransportOptions
-                {
-                    Name = config.Name,
-                    Command = config.Command,
-                    Arguments = config.Arguments,
-                    WorkingDirectory = string.IsNullOrWhiteSpace(config.WorkingDirectory)
-                        ? null
-                        : config.WorkingDirectory,
-                    EnvironmentVariables = env
-                });
-                client = await McpClient.CreateAsync(transport, cancellationToken: ct);
-            }
-            var toolMap = new Dictionary<string, string>(StringComparer.Ordinal);
-            var descriptors = new List<AgentToolDescriptor>();
-
-            if (client.ServerCapabilities.Tools is not null)
-            {
-                var tools = await client.ListToolsAsync(cancellationToken: ct);
-                foreach (var tool in tools)
-                {
-                    var exposed = $"{config.Id}__{tool.Name}";
-                    toolMap[exposed] = tool.Name;
-                    descriptors.Add(CreateDescriptor(config, exposed, tool.Name, tool.Description, tool.JsonSchema.GetRawText()));
-                }
+                config.Url = endpoint.ToString();
+                log?.Invoke($"已补全 MCP 路径: {endpoint}");
             }
 
-            _servers[config.Id] = new ConnectedServer
-            {
-                Config = config,
-                Client = client,
-                ToolToOriginalName = toolMap,
-                ToolDescriptors = descriptors
-            };
+            client = await ConnectRemoteWithRetryAsync(config.Name, endpoint, log, ct);
+        }
+        else
+        {
+            var env = config.Environment.ToDictionary(
+                kv => kv.Key,
+                kv => (string?)kv.Value,
+                StringComparer.OrdinalIgnoreCase);
 
+            var transport = new StdioClientTransport(new StdioClientTransportOptions
+            {
+                Name = config.Name,
+                Command = config.Command,
+                Arguments = config.Arguments,
+                WorkingDirectory = string.IsNullOrWhiteSpace(config.WorkingDirectory)
+                    ? null
+                    : config.WorkingDirectory,
+                EnvironmentVariables = env
+            });
+            client = await McpClient.CreateAsync(transport, cancellationToken: ct);
+        }
+
+        var toolMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var descriptors = new List<AgentToolDescriptor>();
+
+        if (client.ServerCapabilities.Tools is not null)
+        {
+            var tools = await client.ListToolsAsync(cancellationToken: ct);
+            foreach (var tool in tools)
+            {
+                var exposed = $"{config.Id}__{tool.Name}";
+                toolMap[exposed] = tool.Name;
+                descriptors.Add(CreateDescriptor(config, exposed, tool.Name, tool.Description, tool.JsonSchema.GetRawText()));
+            }
+        }
+
+        var entry = new ConnectedServer
+        {
+            Config = config,
+            Client = client,
+            ToolToOriginalName = toolMap,
+            ToolDescriptors = descriptors
+        };
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            if (_servers.Remove(config.Id, out var raced))
+            {
+                await raced.Client.DisposeAsync();
+            }
+
+            _servers[config.Id] = entry;
             log?.Invoke($"已连接 {config.Name}，工具数: {toolMap.Count}");
         }
         finally

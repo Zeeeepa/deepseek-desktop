@@ -126,20 +126,23 @@
     }
     const engineEl = $("engine-status");
     if (engineEl) {
-      engineEl.textContent = data.loggedIn ? "DeepSeek-TUI · 就绪" : "需先登录网页会话";
+      engineEl.textContent = data.loggedIn ? "DSD Harness · 就绪" : "需先登录网页会话";
       engineEl.className = data.loggedIn ? "se-status-ok" : "se-status-bad";
     }
     const summaryEl = $("service-summary");
     if (summaryEl) {
       summaryEl.textContent =
-        data.serviceSummary ||
-        "Chat2API 与 DeepSeek-TUI 在后台自动协作，无需单独管理 API 接口。";
+        data.serviceSummary || "对话桥接与进程内 Harness 在后台运行。";
     }
     $("max-steps").value = data.maxAgentSteps ?? 30;
     $("max-sub-steps").value = data.maxSubAgentSteps ?? 10;
-    $("strategy").value = data.defaultAgentStrategy === "plan" ? "plan" : "react";
-    $("tui-info").textContent = data.tuiInfo || "";
-    $("tui-source").value = data.tuiSourcePath || "";
+    $("strategy").value =
+      (data.defaultAgentStrategy || "execute").toLowerCase() === "plan" ||
+      (data.defaultAgentStrategy || "").toLowerCase() === "blueprint"
+        ? "blueprint"
+        : "execute";
+    $("harness-info").textContent = data.harnessInfo || data.tuiInfo || "";
+    $("sandbox-lazy").checked = data.agentSandboxLazyInit !== false;
     $("workspace").value = data.agentWorkspaceRoot || "";
     $("approval").value = data.agentApprovalMode || "smart";
     $("allow-shell").checked = !!data.agentAllowShell;
@@ -152,8 +155,8 @@
     return {
       maxAgentSteps: parseInt($("max-steps").value, 10) || 30,
       maxSubAgentSteps: parseInt($("max-sub-steps").value, 10) || 10,
-      defaultAgentStrategy: $("strategy").value === "plan" ? "plan" : "react",
-      tuiSourcePath: $("tui-source").value.trim(),
+      defaultAgentStrategy: $("strategy").value || "execute",
+      agentSandboxLazyInit: $("sandbox-lazy").checked,
       agentWorkspaceRoot: $("workspace").value.trim(),
       agentApprovalMode: $("approval").value,
       agentAllowShell: $("allow-shell").checked,
@@ -225,20 +228,11 @@
         alert(e.message || "doctor 失败");
       }
     });
-    $("btn-build-tui")?.addEventListener("click", async () => {
-      try {
-        const res = await postAsync("settingsBuildTui", { tuiSourcePath: $("tui-source").value.trim() });
-        if (res.text) alert(res.text);
-        await reload();
-      } catch (e) {
-        alert(e.message || "编译失败");
-      }
-    });
-
     try {
       await reload();
     } catch (e) {
-      $("tui-info").textContent = "加载设置失败：" + (e.message || e);
+      const el = $("harness-info");
+      if (el) el.textContent = "加载设置失败：" + (e.message || e);
     }
   }
 

@@ -12,7 +12,7 @@ namespace DeepSeekBrowser;
 public partial class MainWindow : System.Windows.Window
 {
     public const string DeepSeekUrl = AppNavigation.DeepSeekUrl;
-    public const string AgentPageUrl = AppNavigation.AgentPageUrl;
+    public static string AgentPageUrl => AppNavigation.AgentPageUrl;
     private static readonly string UserDataFolder = DeepSeekDesktopApp.WebViewUserDataDirectory;
 
     private bool _webViewReady;
@@ -117,6 +117,10 @@ public partial class MainWindow : System.Windows.Window
                     DeepSeekDesktopApp.VerifyWorkModeEnvVar,
                     DeepSeekDesktopApp.LegacyVerifyWorkModeEnvVar))
                 ScheduleWorkModeSelfTest();
+            else if (DeepSeekDesktopApp.IsEnvEnabled(
+                         DeepSeekDesktopApp.VerifyAgentTaskEnvVar,
+                         DeepSeekDesktopApp.VerifyAgentTaskEnvVar))
+                ScheduleAgentTaskSelfTest();
             else if (DeepSeekDesktopApp.IsEnvEnabled(
                          DeepSeekDesktopApp.VerifyAgentEnvVar,
                          DeepSeekDesktopApp.LegacyVerifyAgentEnvVar))
@@ -415,6 +419,60 @@ public partial class MainWindow : System.Windows.Window
             }
 
             WorkModeTrace.Write("AgentSelfTest: timeout waiting for web ready");
+            Environment.ExitCode = 3;
+            await Dispatcher.InvokeAsync(() => Application.Current.Shutdown());
+        });
+    }
+
+    private void ScheduleAgentTaskSelfTest()
+    {
+        _ = Task.Run(async () =>
+        {
+            for (var attempt = 0; attempt < 120; attempt++)
+            {
+                await Task.Delay(1000);
+                var ready = false;
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    ready = _webViewReady && _webHost is { AgentPageReady: true };
+                });
+                if (!ready) continue;
+
+                try
+                {
+                    await Dispatcher.InvokeAsync(async () =>
+                    {
+                        if (_agentHost is null || _webHost is null) return;
+                        WorkModeTrace.Write("AgentTaskTest: web ready, warming bridge");
+                        await _agentHost.WarmChat2ApiBridgeAsync();
+                        await _agentHost.EnsureEmbeddedStackLinkedAsync();
+                        _agentHost.ReloadConfig();
+                        var cfg = ConfigStore.Load();
+                        if (string.IsNullOrWhiteSpace(cfg.WebUserToken))
+                        {
+                            WorkModeTrace.Write("AgentTaskTest: FAIL no webUserToken (login required)");
+                            Environment.ExitCode = 2;
+                            Application.Current.Shutdown();
+                            return;
+                        }
+
+                        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(8));
+                        await _agentHost.VerifyAgentTaskAsync(cts.Token);
+                        Environment.ExitCode = 0;
+                        Application.Current.Shutdown();
+                    });
+                }
+                catch (Exception ex)
+                {
+                    WorkModeTrace.Write("AgentTaskTest: FAIL " + ex.Message);
+                    Environment.ExitCode = 1;
+                    await Dispatcher.InvokeAsync(() => Application.Current.Shutdown());
+                }
+
+                return;
+            }
+
+            WorkModeTrace.Write("AgentTaskTest: timeout waiting for web ready");
             Environment.ExitCode = 3;
             await Dispatcher.InvokeAsync(() => Application.Current.Shutdown());
         });

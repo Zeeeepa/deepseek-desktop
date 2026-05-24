@@ -6,7 +6,7 @@ public sealed class AppConfig
 {
     public string DeepSeekApiKey { get; set; } = "";
     public string WebUserToken { get; set; } = "";
-    public string Model { get; set; } = "DeepSeek-V3.2";
+    public string Model { get; set; } = "deepseek-v4-pro";
     public string ApiBaseUrl { get; set; } = "https://api.deepseek.com";
     public string WebApiBaseUrl { get; set; } = "https://chat.deepseek.com/api";
     /// <summary>外部 OpenAI 兼容 API 端口；0 表示使用内置默认（17425）。桌面模块间通信不经此端口。</summary>
@@ -33,15 +33,18 @@ public sealed class AppConfig
 
     public bool PreferWebSessionForApi { get; set; } = true;
     public int MaxAgentSteps { get; set; } = 25;
-    /// <summary>chat = 网页对话；agent / plan = DeepSeek-TUI + Chat2API</summary>
+    /// <summary>chat = 网页对话；agent / plan = 进程内 Harness + Chat2API</summary>
     public string DefaultWorkMode { get; set; } = "chat";
-    /// <summary>react = Agent；plan = Plan（只读调研）</summary>
-    public string DefaultAgentStrategy { get; set; } = "react";
+    /// <summary>blueprint = Explore→Blueprint；execute = Execute 单阶段。plan/react 为兼容别名。</summary>
+    public string DefaultAgentStrategy { get; set; } = "execute";
 
-    /// <summary>Agent：Chat2API <c>reasoning_effort</c> / 深度思考（默认开启）。</summary>
-    public bool AgentDeepThinking { get; set; } = true;
+    /// <summary>true：首次 run_shell 时再初始化本地沙盒；false：任务开始前初始化。</summary>
+    public bool AgentSandboxLazyInit { get; set; } = true;
 
-    /// <summary>Agent：Chat2API <c>web_search</c> + TUI <c>[features].web_search</c>（默认关闭）。</summary>
+    /// <summary>Agent：Chat2API 深度思考；默认关，由 UI 或用户显式开启，不由客户端预判消息类型。</summary>
+    public bool AgentDeepThinking { get; set; }
+
+    /// <summary>Agent：Chat2API 联网搜索；默认关，由 UI 或用户显式开启。</summary>
     public bool AgentWebSearch { get; set; }
 
     /// <summary>Agent 运行时写入调试日志（%LocalAppData%\deepseek_desktop\logs）。</summary>
@@ -52,23 +55,7 @@ public sealed class AppConfig
     public bool EnableSubAgents { get; set; } = true;
     public int MaxSubAgentSteps { get; set; } = 10;
 
-    /// <summary>DeepSeek-TUI 运行时 HTTP 端口（<c>deepseek serve --http</c>）。</summary>
-    public int DeepSeekTuiRuntimePort { get; set; } = 7878;
-
-    /// <summary>可选：<c>deepseek.exe</c> 或 <c>deepseek.cmd</c> 完整路径；留空则自动探测。</summary>
-    public string DeepSeekTuiExecutablePath { get; set; } = "";
-
-    /// <summary>
-    /// 本地 DeepSeek-TUI 源码根目录（含 Cargo.toml / crates/tui）。
-    /// 留空则尝试 Desktop\DSD\DeepSeek-TUI-main；build.ps1 -UseLocalTui 会从该目录 cargo build。
-    /// </summary>
-    public string DeepSeekTuiSourcePath { get; set; } =
-        @"C:\Users\xiaow\Desktop\DSD\DeepSeek-TUI-main\DeepSeek-TUI-main";
-
-    /// <summary>DeepSeek-TUI <c>serve --http</c> 的 Bearer Token；留空则自动生成并持久化。</summary>
-    public string DeepSeekTuiRuntimeToken { get; set; } = "";
-
-    /// <summary>工作区根目录；DeepSeek-TUI 工具限制在此目录下。</summary>
+    /// <summary>工作区根目录；Harness 内置工具限制在此目录下。</summary>
     [JsonPropertyName("qwenCodeWorkspaceRoot")]
     public string AgentWorkspaceRoot { get; set; } = "";
 
@@ -82,6 +69,31 @@ public sealed class AppConfig
     [JsonPropertyName("qwenCodeAllowShell")]
     public bool AgentAllowShell { get; set; } = true;
 
+    /// <summary>Execute 完成后自动运行 Verify 验收命令（可被 Playbook 覆盖）。</summary>
+    public bool AgentVerifyAfterExecute { get; set; }
+
+    /// <summary>默认 Verify 命令，如 dotnet test。</summary>
+    public string AgentVerifyCommand { get; set; } = "";
+
+    public int AgentVerifyTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>Verify 失败时不阻断任务（仅附加警告）。</summary>
+    public bool AgentVerifyOptional { get; set; }
+
+    /// <summary>连接 MCP 时合并 ~/.cursor/mcp.json、Claude Desktop 等市场配置（默认开启）。</summary>
+    public bool AgentImportMarketMcp { get; set; } = true;
+
+    /// <summary>工具输出超过阈值时落盘到 .deepseek/runs/ 并注入摘要。</summary>
+    public bool AgentToolOutputSpill { get; set; } = true;
+
+    public int AgentToolOutputInlineMaxChars { get; set; } = 6000;
+
+    /// <summary>任务完成后写入 .deepseek/runs/&lt;runId&gt;/postmortem.md</summary>
+    public bool AgentWritePostMortem { get; set; } = true;
+
+    /// <summary>多步 Verify（Execute 完成后按序执行；非空时优先于 AgentVerifyCommand）。</summary>
+    public List<string> AgentVerifyCommands { get; set; } = new();
+
     /// <summary>网页对话输出截断时自动续写。</summary>
     public bool EnableAdaptiveOutputEscalation { get; set; } = true;
 
@@ -93,6 +105,9 @@ public sealed class AppConfig
 
     /// <summary>启动与保存后是否按上述规则自动清理。</summary>
     public bool AgentSessionAutoCleanup { get; set; } = true;
+
+    /// <summary>Agent 自动化 Webhook 监听端口（仅 127.0.0.1）。</summary>
+    public int AgentAutomationsWebhookPort { get; set; } = 17426;
 
     public List<McpServerConfig> McpServers { get; set; } = new()
     {

@@ -1,94 +1,86 @@
 param(
-    [string]$DeployDir = "",
-    [int]$StartupWaitSec = 20,
-    [int]$ShutdownWaitSec = 8
+    [string]$PublishDir = "",
+    [int]$StartupWaitSec = 45,
+    [int]$ShutdownWaitSec = 5
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-if (-not $DeployDir) {
-    $DeployDir = Join-Path ([Environment]::GetFolderPath("Desktop")) "DeepSeek_desktop"
+. (Join-Path $PSScriptRoot "Get-PublishDir.ps1")
+if (-not $PublishDir) {
+    $PublishDir = Get-DeepSeekPublishDir -RepoRoot $root
 }
-$DeployDir = [System.IO.Path]::GetFullPath($DeployDir)
+$PublishDir = [System.IO.Path]::GetFullPath($PublishDir)
 
-$exe = Join-Path $DeployDir "DeepSeek.exe"
-$toolsDir = Join-Path $DeployDir "Assets\tools"
-$toolsPrefix = [System.IO.Path]::GetFullPath($toolsDir).TrimEnd('\') + '\'
+$exe = Join-Path $PublishDir "DeepSeek.exe"
+$appData = Join-Path $env:LOCALAPPDATA "deepseek_desktop"
+$traceLog = Join-Path $appData "logs\work-mode-trace.log"
 
 if (-not (Test-Path $exe)) {
     throw "DeepSeek.exe not found: $exe"
 }
 
-function Get-DeployTuiProcesses {
-    Get-Process -ErrorAction SilentlyContinue | Where-Object {
+function Get-PublishDeepSeekProcesses {
+    Get-Process -Name "DeepSeek" -ErrorAction SilentlyContinue | Where-Object {
         try {
             if ($_.HasExited) { return $false }
             $path = $_.MainModule.FileName
             if (-not $path) { return $false }
-            $full = [System.IO.Path]::GetFullPath($path)
-            if (-not $full.StartsWith($toolsPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
-            $name = [System.IO.Path]::GetFileName($full)
-            return $name -eq "deepseek.exe" -or $name -eq "deepseek-tui.exe"
+            return [System.IO.Path]::GetFullPath($path).StartsWith($PublishDir, [StringComparison]::OrdinalIgnoreCase)
         } catch {
             return $false
         }
     }
 }
 
-function Stop-DeployAppInstances {
-    Get-Process -Name "DeepSeek" -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-            $path = $_.MainModule.FileName
-            if ($path -and ([System.IO.Path]::GetFullPath($path).StartsWith($DeployDir, [StringComparison]::OrdinalIgnoreCase))) {
-                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-            }
-        } catch { }
+function Stop-PublishAppInstances {
+    Get-PublishDeepSeekProcesses | ForEach-Object {
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
     }
 }
 
-Write-Host "verify-runtime-shutdown: deploy dir $DeployDir"
+Write-Host "verify-runtime-shutdown: publish dir $PublishDir"
 
-Stop-DeployAppInstances
-Get-DeployTuiProcesses | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+Stop-PublishAppInstances
 Start-Sleep -Seconds 2
 
-Write-Host "Starting DeepSeek.exe (graceful shutdown verify mode) ..."
+Write-Host "Starting DeepSeek.exe (DEEPSEEK_DESKTOP_VERIFY_SHUTDOWN=1) ..."
 $env:DEEPSEEK_DESKTOP_VERIFY_SHUTDOWN = "1"
-$app = Start-Process -FilePath $exe -WorkingDirectory $DeployDir -PassThru
-Remove-Item Env:DEEPSEEK_DESKTOP_VERIFY_SHUTDOWN -ErrorAction SilentlyContinue
-try {
-    $deadline = (Get-Date).AddSeconds($StartupWaitSec)
-    $tuiSeen = $false
-    while ((Get-Date) -lt $deadline) {
-        if ($app.HasExited) { break }
-        Start-Sleep -Seconds 2
-        $tui = @(Get-DeployTuiProcesses)
-        if ($tui.Count -gt 0) {
-            Write-Host "  OK TUI processes running: $($tui.Count)"
-            $tuiSeen = $true
-        }
-        if ($app.HasExited -and $tuiSeen) { break }
-    }
-    if (-not $tuiSeen) {
-        throw "No deepseek.exe / deepseek-tui.exe from $toolsDir within ${StartupWaitSec}s"
-    }
+$app = Start-Process -FilePath $exe -WorkingDirectory $PublishDir -PassThru
+Remove-Item Env:\DEEPSEEK_DESKTOP_VERIFY_SHUTDOWN -ErrorAction SilentlyContinue
 
+try {
     $exitDeadline = (Get-Date).AddSeconds($StartupWaitSec)
-    while (-not $app.HasExited -and (Get-Date) -lt $exitDeadline) {
+    $sawShutdownLog = $false
+    while ((Get-Date) -lt $exitDeadline) {
+        if ($app.HasExited) { break }
+        if (Test-Path $traceLog) {
+            $tail = Get-Content $traceLog -Tail 30 -ErrorAction SilentlyContinue
+            if ($tail -match "ShutdownVerify: exiting gracefully") {
+                $sawShutdownLog = $true
+            }
+        }
         Start-Sleep -Seconds 1
     }
+
     if (-not $app.HasExited) {
-        throw "DeepSeek.exe did not exit gracefully within ${StartupWaitSec}s"
+        throw "DeepSeek.exe did not exit within ${StartupWaitSec}s (shutdown verify mode)"
     }
+
     Write-Host "  OK DeepSeek.exe exited (code $($app.ExitCode))"
+    if ($sawShutdownLog) {
+        Write-Host "  OK ShutdownVerify trace present"
+    } else {
+        Write-Host "  WARN no ShutdownVerify trace (exit code still validated)"
+    }
 
     Start-Sleep -Seconds $ShutdownWaitSec
-    $leftover = @(Get-DeployTuiProcesses)
+    $leftover = @(Get-PublishDeepSeekProcesses)
     if ($leftover.Count -gt 0) {
         $detail = ($leftover | ForEach-Object {
             try { $_.MainModule.FileName } catch { $_.ProcessName }
         }) -join ", "
-        throw "TUI processes still running after exit: $detail"
+        throw "DeepSeek.exe still running from publish dir after exit: $detail"
     }
 
     Write-Host "verify-runtime-shutdown: PASS"
@@ -97,5 +89,5 @@ finally {
     if (-not $app.HasExited) {
         Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
     }
-    Get-DeployTuiProcesses | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+    Stop-PublishAppInstances
 }

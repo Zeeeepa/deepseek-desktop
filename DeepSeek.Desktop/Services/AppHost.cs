@@ -1,7 +1,5 @@
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
-using DeepSeekBrowser.Services.DeepSeekTui;
-using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 
 namespace DeepSeek.Desktop.Services;
@@ -14,7 +12,6 @@ public sealed class AppHost
     private WinUiWebChatBridgeHost? _bridge;
     private WinUiWebInjectService? _chatInject;
     private LocalOpenAiServer? _externalApi;
-    private readonly DeepSeekTuiHost _tuiHost = new();
     private readonly ChatMessageRouter _chatRouter = new();
     private AppConfig _config = new();
 
@@ -22,8 +19,8 @@ public sealed class AppHost
 
     public AppConfig Config => _config;
     public WinUiWebInjectService? ChatInject => _chatInject;
+    public WinUiWebChatBridgeHost? ChatBridge => _bridge;
     public LocalOpenAiServer? ExternalApi => _externalApi;
-    public DeepSeekTuiHost TuiHost => _tuiHost;
 
     public async Task InitializeAsync(WebView2 chatWebView, WebView2 bridgeWebView)
     {
@@ -50,7 +47,7 @@ public sealed class AppHost
 
         _chatRouter.Attach(_chatInject);
 
-        await DesktopEmbeddedStack.EnsureLinkedAsync(_config, _tuiHost, _chatInject);
+        await DesktopEmbeddedStack.EnsureLinkedAsync(_config, _chatInject);
 
         if (_config.EnableExternalOpenAiApi)
             _externalApi.EnsureExternalApiListening();
@@ -75,17 +72,17 @@ public sealed class AppHost
     public Task EnsureStackLinkedAsync(CancellationToken ct = default) =>
         _chatInject is null
             ? Task.CompletedTask
-            : DesktopEmbeddedStack.EnsureLinkedAsync(_config, _tuiHost, _chatInject, ct);
+            : DesktopEmbeddedStack.EnsureLinkedAsync(_config, _chatInject, ct);
 
     public void BeginAgentLlmBridge()
     {
         _externalApi?.EnsureAgentScopedListening();
-        DeepSeekTuiConfigSync.Apply(_config);
+        AgentDesktopConfigSync.Apply(_config);
     }
 
     public void EndAgentLlmBridge()
     {
         _externalApi?.ReleaseAgentScopedListening();
-        DeepSeekTuiConfigSync.Apply(_config);
+        AgentDesktopConfigSync.Apply(_config);
     }
 }

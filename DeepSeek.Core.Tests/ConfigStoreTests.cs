@@ -25,8 +25,10 @@ public sealed class ConfigStoreTests : IDisposable
     public void Load_returns_default_when_missing()
     {
         var cfg = ConfigStore.Load();
-        Assert.Equal("DeepSeek-V3.2", cfg.Model);
+        Assert.Equal("deepseek-v4-pro", cfg.Model);
         Assert.Equal("chat", cfg.DefaultWorkMode);
+        Assert.False(cfg.AgentDeepThinking);
+        Assert.False(cfg.AgentWebSearch);
     }
 
     [Fact]

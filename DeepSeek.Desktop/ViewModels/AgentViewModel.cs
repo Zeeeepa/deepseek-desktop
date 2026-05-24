@@ -22,7 +22,7 @@ public sealed class AgentViewModel
     public bool IsRunning { get; private set; }
     public bool DeepThinking { get; set; } = true;
     public bool WebSearch { get; set; }
-    public string Strategy { get; set; } = AgentStrategies.React;
+    public string Strategy { get; set; } = AgentStrategies.Execute;
 
     public event Action? StateChanged;
 

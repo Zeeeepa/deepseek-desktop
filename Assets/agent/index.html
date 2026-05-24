@@ -7,6 +7,9 @@
   <link rel="icon" href="favicon.ico" type="image/x-icon" />
   <link rel="stylesheet" href="https://ds-inject.local/ds-theme.css" />
   <link rel="stylesheet" href="agent.css" />
+  <link rel="stylesheet" href="message-render.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" crossorigin="anonymous" />
 </head>
 <body>
   <div class="ds-app">
@@ -30,13 +33,57 @@
         </div>
       </div>
 
+      <section class="ds-workspace-section" aria-label="工作区">
+        <div class="ds-workspace-head">
+          <span class="ds-workspace-title">Workspaces</span>
+          <div class="ds-workspace-head-actions">
+            <button type="button" class="ds-icon-btn ds-icon-btn-sm" id="btn-workspace-filter" aria-label="筛选工作区" title="筛选">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5h18M7 12h10M10 19h4"/></svg>
+            </button>
+            <button type="button" class="ds-icon-btn ds-icon-btn-sm" id="btn-workspace-add" aria-label="打开工作区文件夹" title="打开文件夹">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14h6"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="ds-workspace-filter" id="workspace-filter" hidden>
+          <input type="search" class="ds-workspace-search" id="workspace-search" placeholder="筛选工作区…" autocomplete="off" />
+        </div>
+        <div class="ds-workspace-list" id="workspace-list" role="list"></div>
+      </section>
+
       <button type="button" class="ds-new-chat" id="btn-new-chat">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
         <span>开启新对话</span>
       </button>
+
+      <div class="ds-sidebar-history">
+        <div class="ds-session-list" id="session-list" role="list"></div>
+        <p class="ds-session-empty" id="session-empty" hidden>暂无历史对话</p>
+      </div>
     </aside>
 
     <main class="ds-main">
+      <header class="ds-context-bar" id="context-bar" aria-label="工作区与运行环境">
+        <button type="button" class="ds-ctx-chip" id="ctx-workspace" aria-haspopup="menu" aria-expanded="false">
+          <svg class="ds-ctx-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+          <span class="ds-ctx-label" id="ctx-workspace-label">工作区</span>
+          <svg class="ds-ctx-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <button type="button" class="ds-ctx-chip" id="ctx-mode" aria-haspopup="menu" aria-expanded="false">
+          <span class="ds-ctx-label" id="ctx-mode-label">Execute</span>
+          <svg class="ds-ctx-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <button type="button" class="ds-mode-float ds-on" id="mode-float" data-ds-workmode-floater="1" title="当前为 Agent 模式，点击切换到普通对话">
+          <span class="ds-mode-float-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a4 4 0 0 1 4 4v1h1a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V10a3 3 0 0 1 3-3h1V6a4 4 0 0 1 4-4z"/></svg>
+          </span>
+          <span id="mode-float-label">Agent</span>
+        </button>
+      </header>
+
+      <div class="ds-ctx-backdrop" id="ctx-backdrop" hidden aria-hidden="true"></div>
+      <div class="ds-ctx-menu" id="ctx-menu" hidden role="menu"></div>
+
       <div class="ds-embedded-panel" id="embedded-panel" hidden>
         <header class="ds-embedded-head">
           <button type="button" class="ds-embedded-back" id="embedded-back" aria-label="返回">
@@ -54,13 +101,6 @@
         </div>
       </div>
 
-      <button type="button" class="ds-mode-float ds-on" id="mode-float" data-ds-workmode-floater="1" title="当前为 Agent 模式，点击切换到普通对话">
-        <span class="ds-mode-float-icon" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a4 4 0 0 1 4 4v1h1a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V10a3 3 0 0 1 3-3h1V6a4 4 0 0 1 4-4z"/></svg>
-        </span>
-        <span id="mode-float-label">Agent</span>
-      </button>
-
       <div class="ds-chat-scroll" id="chat-scroll">
         <div class="ds-empty" id="empty-state">
           <h2 class="ds-empty-title">今天有什么可以帮到你？</h2>
@@ -74,6 +114,7 @@
           <button type="button" class="ds-text-btn" id="btn-login-goto">去登录</button>
         </div>
         <div class="ds-composer-outer">
+          <div class="ds-slash-palette" id="slash-palette" hidden role="listbox" aria-label="命令与工具"></div>
           <div class="ds-composer">
             <div class="ds-file-chips" id="file-chips" hidden></div>
             <textarea
@@ -84,14 +125,6 @@
             <div class="ds-composer-bar">
               <div class="ds-composer-tools">
                 <input type="file" id="file-input" class="ds-file-input" multiple accept=".txt,.md,.json,.csv,.log,.py,.js,.ts,.cs,.html,.xml,.yaml,.yml,.pdf,text/*" />
-                <button type="button" class="ds-feature-pill" id="btn-deep-think" aria-pressed="true" title="深度思考（Chat2API reasoning_effort）">
-                  <svg class="ds-feature-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="2.2" stroke="currentColor" stroke-width="1.6"/><ellipse cx="12" cy="12" rx="8" ry="3.2" stroke="currentColor" stroke-width="1.4"/><ellipse cx="12" cy="12" rx="3.2" ry="8" stroke="currentColor" stroke-width="1.4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="3.2" ry="8" stroke="currentColor" stroke-width="1.4" transform="rotate(-60 12 12)"/></svg>
-                  <span>深度思考</span>
-                </button>
-                <button type="button" class="ds-feature-pill" id="btn-smart-search" aria-pressed="false" title="智能搜索（Chat2API web_search）">
-                  <svg class="ds-feature-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M2 12h20M12 2c2.8 3.2 2.8 16.8 0 20M12 2c-2.8 3.2-2.8 16.8 0 20" stroke="currentColor" stroke-width="1.4"/></svg>
-                  <span>智能搜索</span>
-                </button>
                 <button type="button" class="ds-tool-btn" id="btn-attach" title="上传文件" aria-label="上传文件">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 </button>
@@ -116,14 +149,54 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h10M4 17h16"/><circle cx="18" cy="12" r="3"/></svg>
       API 管理
     </button>
+    <button type="button" class="ds-sidebar-link" id="btn-automations" role="menuitem" title="常驻自动化 Agent">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="4"/></svg>
+      Automations
+    </button>
     <button type="button" class="ds-sidebar-link" id="btn-mcp" role="menuitem" title="DeepSeek 设置（Agent、MCP、工作区）">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
       设置
     </button>
   </div>
 
+  <div class="ds-auto-intro-backdrop" id="auto-intro-backdrop" hidden aria-hidden="true"></div>
+  <div class="ds-auto-intro" id="auto-intro" hidden role="dialog" aria-labelledby="auto-intro-title" aria-modal="true">
+    <div class="ds-auto-intro-visual" aria-hidden="true">
+      <div class="ds-auto-flow">
+        <div class="ds-auto-flow-col">
+          <span class="ds-auto-pill ds-auto-pill-t">触发器</span>
+          <span class="ds-auto-chip">新 PR</span>
+          <span class="ds-auto-chip">Bug 报告</span>
+        </div>
+        <span class="ds-auto-op">或</span>
+        <div class="ds-auto-flow-col">
+          <span class="ds-auto-pill ds-auto-pill-a">动作</span>
+          <span class="ds-auto-chip">修复 Bug</span>
+          <span class="ds-auto-chip">发送摘要</span>
+        </div>
+      </div>
+    </div>
+    <h2 id="auto-intro-title" class="ds-auto-intro-title">现已支持：Agent 窗口中的 Automations</h2>
+    <p class="ds-auto-intro-body">配置常驻 Agent，按<strong>时间表</strong>或 <strong>Webhook / GitHub / Slack</strong> 事件自动运行，无需每次手动发消息。</p>
+    <ul class="ds-auto-intro-list">
+      <li>无人值守：后台自动执行 Harness 任务</li>
+      <li>定时与事件触发（本地 Webhook：<code>127.0.0.1</code>）</li>
+      <li>自定义指令与工具（MCP、沙盒、深度思考）</li>
+    </ul>
+    <div class="ds-auto-intro-actions">
+      <button type="button" class="ds-auto-btn ds-auto-btn-primary" id="auto-intro-try">试用 Automations</button>
+      <a class="ds-auto-btn" id="auto-intro-learn" href="https://cursor.com/docs/cloud-agent/automations" target="_blank" rel="noopener">了解更多</a>
+      <button type="button" class="ds-auto-btn ds-auto-btn-ghost" id="auto-intro-later">稍后</button>
+    </div>
+  </div>
+
   <script src="https://ds-inject.local/bridge.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+  <script src="message-render.js?v=2"></script>
   <script src="https://ds-inject.local/work-mode-client.js"></script>
-  <script src="agent-app.js?v=15"></script>
+  <script src="agent-app.js?v=23"></script>
 </body>
 </html>

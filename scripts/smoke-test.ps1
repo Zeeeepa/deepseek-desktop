@@ -5,22 +5,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "Get-PublishDir.ps1")
 $appData = Join-Path $env:LOCALAPPDATA "deepseek_desktop"
 
 if (-not $ExePath) {
-    $candidates = @(
-        (Join-Path $root "publish\DeepSeek.exe"),
-        (Join-Path $root "publish\DeepSeek.Desktop.exe"),
-        (Join-Path $root "bin\Release\net9.0-windows10.0.19041.0\win-x64\DeepSeek.Desktop.exe"),
-        (Join-Path $root "bin\Debug\net10.0-windows\DeepSeek.exe")
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { $ExePath = $c; break }
-    }
+    $ExePath = Get-DeepSeekPublishExe -RepoRoot $root
 }
 
 if (-not (Test-Path $ExePath)) {
-    throw "smoke-test: executable not found. Build with build.ps1 first."
+    throw "smoke-test: executable not found at publish\DeepSeek.exe. Run .\build.ps1 first."
 }
 
 Write-Host "smoke-test: launching $ExePath (DEEPSEEK_DESKTOP_VERIFY_WORKMODE=1)"
@@ -41,7 +34,7 @@ try {
         }
         if (Test-Path $workModeLog) {
             $tail = Get-Content $workModeLog -Tail 20 -ErrorAction SilentlyContinue
-            if ($tail -match "verify.*(ok|pass|done)" -or $tail -match "self.?test.*ok" -or $tail -match "SelfTest: chat surface") {
+            if ($tail -match "verify.*(ok|pass|done)" -or $tail -match "self.?test.*ok" -or $tail -match "SelfTest: chat surface" -or $tail -match "SelfTest: after chat" -or $tail -match "SelfTest: ApplyWorkMode agent") {
                 Write-Host "smoke-test: work mode self-test log detected"
                 Write-Host "PASS"
                 exit 0

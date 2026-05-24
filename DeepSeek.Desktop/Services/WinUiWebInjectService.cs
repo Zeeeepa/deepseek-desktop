@@ -183,7 +183,7 @@ public sealed class WinUiWebInjectService : IWebInjectBridge
         var overlayCssPath = Path.Combine(baseDir, "overlay.css");
         if (!File.Exists(overlayCssPath))
             throw new FileNotFoundException(
-                $"缺少 {overlayCssPath}。请重新运行 build.ps1 完整部署到桌面 DeepSeek_desktop。", overlayCssPath);
+                $"缺少 {overlayCssPath}。请重新运行 .\\build.ps1，并从 .\\publish\\DeepSeek.exe 启动。", overlayCssPath);
 
         var overlayCss = File.ReadAllText(overlayCssPath);
         if (File.Exists(themePath))
@@ -198,11 +198,19 @@ public sealed class WinUiWebInjectService : IWebInjectBridge
     private void LoadAssets()
     {
         var assets = InjectAssets.Value;
-        _bridgeScript = assets.Bridge;
-        _workModeClientScript = assets.WorkModeClient;
+        _bridgeScript = GuardDocumentCreatedScript(assets.Bridge, "bridge");
+        _workModeClientScript = GuardDocumentCreatedScript(assets.WorkModeClient, "work-mode");
         _overlayScript = assets.Overlay;
         _overlayCss = assets.Css;
     }
+
+    private static string GuardDocumentCreatedScript(string script, string name) =>
+        "(function(){try{"
+        + "var h=(location.hostname||'').toLowerCase(),p=location.pathname||'';"
+        + "if(h==='ds-chat2api.local')return;"
+        + "if(h==='ds-agent.local'&&p.indexOf('/chat2api/')!==-1)return;"
+        + script
+        + "}catch(e){console.warn('[DeepSeek Desktop] inject " + name + "',e);}})();";
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -452,7 +460,7 @@ public sealed class WinUiWebInjectService : IWebInjectBridge
             throw new InvalidOperationException("流式 Chat 需要 Chat2API 桥接 WebView，请重启应用。");
 
         return _apiBridge.WebChatStreamAsync(
-            messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId);
+            messages, model, thinking, search, AgentRefFileIds, allowToolCalls: false, ct, webUserToken, webChatSessionId);
     }
 
     public Task<WebChatResult> WebChatAsync(
@@ -477,7 +485,7 @@ public sealed class WinUiWebInjectService : IWebInjectBridge
         if (_apiBridge is not null)
         {
             return await _apiBridge.WebChatAsync(
-                messages, model, thinking, search, AgentRefFileIds, ct, webUserToken, webChatSessionId);
+                messages, model, thinking, search, AgentRefFileIds, allowToolCalls: false, ct, webUserToken, webChatSessionId);
         }
 
         var payload = new List<object>();

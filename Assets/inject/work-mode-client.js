@@ -108,7 +108,13 @@
     lastToggleAt = now;
     var extra = readTokenExtra();
     var goingAgent = !state || state.surface !== "agent";
-    if (!goingAgent) extra = {};
+    if (!goingAgent) {
+      extra = {};
+      try {
+        if (window.__dsAgentWebChatSessionId)
+          extra.webChatSessionId = window.__dsAgentWebChatSessionId;
+      } catch (_) {}
+    }
     post("toggleWorkMode", extra);
   }
 

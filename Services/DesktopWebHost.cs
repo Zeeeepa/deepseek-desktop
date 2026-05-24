@@ -71,7 +71,23 @@ public sealed class DesktopWebHost
 
     public bool IsAgentHostPage => IsAgentVisible;
 
+    public string? AgentSource => _agentView.CoreWebView2?.Source;
+
     public WebInjectService ActiveInject => IsAgentVisible ? Agent : Chat;
+
+    public Task NavigateAgentAsync(string url)
+    {
+        RunOnUiSync(() =>
+        {
+            ShowAgent();
+            var core = _agentView.CoreWebView2;
+            if (core is null) return;
+            var current = core.Source ?? "";
+            if (!string.Equals(current, url, StringComparison.OrdinalIgnoreCase))
+                core.Navigate(url);
+        });
+        return Task.CompletedTask;
+    }
 
     public Task PostToPageAsync(object message) => ActiveInject.PostToPageAsync(message);
 
@@ -153,10 +169,60 @@ public sealed class DesktopWebHost
         string model,
         bool thinking,
         bool search,
+        IReadOnlyList<string> refFileIds,
+        bool allowToolCalls,
+        CancellationToken ct,
+        string? webUserToken = null,
+        string? webChatSessionId = null)
+    {
+        var inject = ActiveInject;
+        var prev = inject.AgentRefFileIds;
+        inject.AgentRefFileIds = refFileIds;
+        try
+        {
+            return inject.WebChatStreamAsync(
+                messages, model, thinking, search, ct, webUserToken, webChatSessionId, allowToolCalls);
+        }
+        finally
+        {
+            inject.AgentRefFileIds = prev;
+        }
+    }
+
+    public Task<WebChatResult> WebChatAsync(
+        IReadOnlyList<ChatMessage> messages,
+        string model,
+        bool thinking,
+        bool search,
+        IReadOnlyList<string> refFileIds,
+        bool allowToolCalls,
+        CancellationToken ct,
+        string? webUserToken = null,
+        string? webChatSessionId = null)
+    {
+        var inject = ActiveInject;
+        var prev = inject.AgentRefFileIds;
+        inject.AgentRefFileIds = refFileIds;
+        try
+        {
+            return inject.WebChatAsync(
+                messages, model, thinking, search, ct, webUserToken, webChatSessionId, allowToolCalls);
+        }
+        finally
+        {
+            inject.AgentRefFileIds = prev;
+        }
+    }
+
+    public IAsyncEnumerable<WebChatStreamEvent> WebChatStreamAsync(
+        IReadOnlyList<ChatMessage> messages,
+        string model,
+        bool thinking,
+        bool search,
         CancellationToken ct,
         string? webUserToken = null,
         string? webChatSessionId = null) =>
-        Chat.WebChatStreamAsync(messages, model, thinking, search, ct, webUserToken, webChatSessionId);
+        WebChatStreamAsync(messages, model, thinking, search, AgentRefFileIds, false, ct, webUserToken, webChatSessionId);
 
     public Task<WebChatResult> WebChatAsync(
         IReadOnlyList<ChatMessage> messages,
@@ -166,7 +232,21 @@ public sealed class DesktopWebHost
         CancellationToken ct,
         string? webUserToken = null,
         string? webChatSessionId = null) =>
-        Chat.WebChatAsync(messages, model, thinking, search, ct, webUserToken, webChatSessionId);
+        WebChatAsync(messages, model, thinking, search, AgentRefFileIds, false, ct, webUserToken, webChatSessionId);
+
+    public Task SyncChatSessionAsync(string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)) return Task.CompletedTask;
+        var url = AppNavigation.ChatSessionUrl(sessionId);
+        var core = _chatView.CoreWebView2;
+        if (core is null) return Task.CompletedTask;
+
+        var current = core.Source ?? "";
+        if (SameChatLocation(current, url)) return Task.CompletedTask;
+
+        core.Navigate(url);
+        return Task.CompletedTask;
+    }
 
     public async Task SwitchToUrlAsync(string url)
     {
@@ -181,11 +261,31 @@ public sealed class DesktopWebHost
         if (core is null) return;
 
         var current = core.Source ?? "";
-        if (url.StartsWith("https://chat.deepseek.com", StringComparison.OrdinalIgnoreCase) &&
-            current.StartsWith("https://chat.deepseek.com", StringComparison.OrdinalIgnoreCase))
-            return;
+        if (SameChatLocation(current, url)) return;
 
         core.Navigate(url);
+    }
+
+    private static bool SameChatLocation(string current, string target)
+    {
+        if (string.IsNullOrWhiteSpace(current) || string.IsNullOrWhiteSpace(target))
+            return false;
+
+        try
+        {
+            var c = new Uri(current);
+            var t = new Uri(target);
+            if (!c.Host.Equals(t.Host, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var cp = c.AbsolutePath.TrimEnd('/');
+            var tp = t.AbsolutePath.TrimEnd('/');
+            return string.Equals(cp, tp, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
     }
 
     public void ShowChat()

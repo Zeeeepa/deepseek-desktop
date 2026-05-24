@@ -281,6 +281,7 @@ public sealed class WinUiWebChatBridgeHost
         bool thinking,
         bool search,
         IReadOnlyList<string> refFileIds,
+        bool allowToolCalls,
         CancellationToken ct,
         string? webUserToken = null,
         string? webChatSessionId = null) =>
@@ -300,7 +301,7 @@ public sealed class WinUiWebChatBridgeHost
                 modelType = "expert",
                 refFileIds = refFileIds.ToArray(),
                 chatSessionId = webChatSessionId,
-                suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
+                suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun && !allowToolCalls
             });
             var expr =
                 $"window.dsDesktopBridge.webChatCompletion({msgJson}, {JsonSerializer.Serialize(model)}, {optsJson})";
@@ -315,6 +316,7 @@ public sealed class WinUiWebChatBridgeHost
         bool thinking,
         bool search,
         IReadOnlyList<string> refFileIds,
+        bool allowToolCalls,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct,
         string? webUserToken = null,
         string? webChatSessionId = null)
@@ -343,7 +345,7 @@ public sealed class WinUiWebChatBridgeHost
             modelType = "expert",
             refFileIds = refFileIds.ToArray(),
             chatSessionId = webChatSessionId,
-            suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
+            suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun && !allowToolCalls
         });
         var streamIdJson = JsonSerializer.Serialize(hub.StreamId);
         var modelJson = JsonSerializer.Serialize(model);

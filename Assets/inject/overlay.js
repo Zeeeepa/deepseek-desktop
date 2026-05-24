@@ -175,12 +175,22 @@
       const style = document.createElement("style");
       style.id = "ds-native-style-fallback";
       style.textContent =
-        "#ds-toast-wrap{position:fixed!important;right:20px!important;bottom:24px!important;left:auto!important;top:auto!important;z-index:2147483647!important;max-width:360px!important;pointer-events:none!important}#ds-provider-mask{position:fixed!important;inset:0!important;z-index:2147483646!important;display:flex!important;align-items:center!important;justify-content:center!important;background:rgba(0,0,0,.4)!important}.ds-mode-menu-portal{position:fixed!important;z-index:2147483647!important;pointer-events:auto!important}#ds-agent-mode-float,.ds-agent-mode-float-btn{position:fixed!important;top:14px!important;right:16px!important;left:auto!important;bottom:auto!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important}.ds-mode-wrap{margin:0!important;padding:0!important}";
+        "#ds-toast-wrap{position:fixed!important;right:20px!important;bottom:24px!important;left:auto!important;top:auto!important;z-index:2147483647!important;max-width:360px!important;pointer-events:none!important}#ds-provider-mask{position:fixed!important;inset:0!important;z-index:2147483646!important;display:flex!important;align-items:center!important;justify-content:center!important;background:rgba(0,0,0,.4)!important}.ds-mode-menu-portal{position:fixed!important;z-index:2147483647!important;pointer-events:auto!important}#ds-agent-mode-float,.ds-agent-mode-float-btn{position:fixed!important;top:14px!important;right:16px!important;left:auto!important;bottom:auto!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important}.ds-mode-wrap{margin:0!important;padding:0!important}";
       appendToHead(style);
     }
   }
 
+  function isModeFloater(btn) {
+    return !!(
+      btn &&
+      (btn.id === "ds-agent-mode-float" ||
+        btn.classList.contains("ds-agent-mode-float") ||
+        btn.classList.contains("ds-agent-mode-float-btn"))
+    );
+  }
+
   function applyBtnStyle(btn, on) {
+    if (isModeFloater(btn)) return;
     Object.assign(btn.style, BTN_OFF);
     if (on) Object.assign(btn.style, BTN_ON);
   }
@@ -360,9 +370,9 @@
         label.id = "ds-agent-mode-float-label";
       }
       label.textContent = ui.label;
-      applyBtnStyle(btn, !!ui.highlight);
       btn.dataset.dsOn = ui.highlight ? "1" : "0";
       btn.classList.toggle("ds-on", !!ui.highlight);
+      btn.style.cssText = "";
       btn.setAttribute("aria-label", ui.title);
       btn.title = ui.title;
       bindFloaterClick(btn);
@@ -811,7 +821,7 @@
     btn = document.createElement("button");
     btn.id = "ds-agent-mode-float";
     btn.type = "button";
-    btn.className = "ds-agent-mode-float ds-agent-mode-float-btn ds-native-btn ds-ext-btn";
+    btn.className = "ds-agent-mode-float ds-agent-mode-float-btn";
     btn.setAttribute("data-ds-floater", "1");
 
     const icon = document.createElement("span");
@@ -827,12 +837,6 @@
     bindFloaterClick(btn);
 
     appendToBody(btn);
-    applyBtnStyle(btn, false);
-    btn.style.position = "fixed";
-    btn.style.top = "14px";
-    btn.style.right = "16px";
-    btn.style.zIndex = "2147483647";
-    btn.style.pointerEvents = "auto";
     syncWorkModeUi();
     return btn;
   }
@@ -964,7 +968,7 @@
     const desc = document.createElement("div");
     desc.style.cssText = "font-size:13px;color:#6b7280;line-height:1.5;margin-bottom:12px";
     desc.textContent =
-      "经本地 Chat2API 使用网页会话；Agent 由 DeepSeek-TUI 驱动（deepseek-v4-pro 等官方模型 ID）。";
+      "经本地 Chat2API 使用网页会话；Agent 由进程内 DSD Harness 驱动。";
     const stats = document.createElement("div");
     stats.style.cssText = "font-size:12px;color:#374151;margin-bottom:12px;line-height:1.8";
     stats.textContent =
@@ -1019,7 +1023,7 @@
       fieldRow("Chat2API Base URL", baseUrl, baseUrl),
       fieldRow("API Key", masked, apiKey)
     );
-    if (info.tuiRuntimeUrl) card.append(fieldRow("DeepSeek-TUI", info.tuiRuntimeUrl, info.tuiRuntimeUrl));
+    if (info.harnessRuntimeUrl) card.append(fieldRow("DSD Harness", info.harnessRuntimeUrl, info.harnessRuntimeUrl));
     card.append(actions);
     mask.appendChild(card);
     appendToBody(mask);
@@ -1113,7 +1117,7 @@
     post("agentRun", {
       text,
       mode: readNativeMode(),
-      strategy: workMode === "plan" ? "plan" : "react",
+      strategy: workMode === "plan" ? "blueprint" : "execute",
       deepThink: readToggle("深度思考"),
       smartSearch: readToggle("智能搜索"),
       mcpOn: true,

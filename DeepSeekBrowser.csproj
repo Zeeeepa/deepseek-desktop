@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;DeepSeek.Core\**;DeepSeek.Core.Tests\**;DeepSeek.Desktop\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;DeepSeek.Core\**;DeepSeek.Core.Tests\**;DeepSeek.Desktop\**;tmp-*.cs</DefaultItemExcludes>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

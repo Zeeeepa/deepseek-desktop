@@ -10,39 +10,39 @@
 <body>
   <div class="se-page">
     <h1 class="se-title">DeepSeek 设置</h1>
-    <p class="se-subtitle">DeepSeek Desktop · Agent 引擎 · MCP</p>
+    <p class="se-subtitle">DeepSeek Desktop · DSD Harness · MCP</p>
     <h2 class="se-section">服务状态</h2>
     <section class="se-card">
       <div class="se-grid">
         <div class="se-field"><label>网页会话</label><div id="web-token-status" class="se-status-bad">检测中…</div></div>
         <div class="se-field"><label>Agent 引擎</label><div id="engine-status">检测中…</div></div>
       </div>
-      <p class="se-hint" id="service-summary">Chat2API 与 DeepSeek-TUI 在后台自动协作，无需单独管理 API 接口。</p>
+      <p class="se-hint" id="service-summary">对话桥接与进程内 Harness 在后台运行。</p>
     </section>
     <h2 class="se-section">Agent 行为</h2>
     <section class="se-card">
       <div class="se-grid">
         <div class="se-field"><label for="max-steps">最大 Agent 步数</label><input id="max-steps" type="number" min="1" max="100" /></div>
         <div class="se-field"><label for="max-sub-steps">子 Agent 最大步数</label><input id="max-sub-steps" type="number" min="1" max="50" /></div>
-        <div class="se-field"><label for="strategy">默认 Agent 策略</label><select id="strategy"><option value="react">Agent 模式（多步工具）</option><option value="plan">Plan 模式（只读调研）</option></select></div>
+        <div class="se-field"><label for="strategy">默认 Harness 工作流</label><select id="strategy"><option value="execute">Execute（多步执行）</option><option value="blueprint">Blueprint（探索→蓝图）</option></select></div>
       </div>
     </section>
-    <h2 class="se-section">DeepSeek-TUI Agent</h2>
+    <h2 class="se-section">DSD Harness</h2>
     <section class="se-card">
-      <p class="se-hint" id="tui-info"></p>
+      <p class="se-hint" id="harness-info"></p>
       <div class="se-row">
         <button type="button" class="se-btn" id="btn-open-home">打开 ~/.deepseek</button>
         <button type="button" class="se-btn" id="btn-doctor">运行 doctor</button>
-        <button type="button" class="se-btn" id="btn-build-tui">从源码编译</button>
-        <button type="button" class="se-btn" id="btn-docs">官网文档</button>
+        <button type="button" class="se-btn" id="btn-docs">Harness 说明</button>
       </div>
-      <div class="se-field"><label for="tui-source">TUI 源码目录</label><input id="tui-source" type="text" spellcheck="false" /></div>
       <div class="se-field"><label for="workspace">工作区根目录（留空 = 用户主目录）</label><input id="workspace" type="text" spellcheck="false" /></div>
+      <p class="se-hint">Shell 命令在本地工作区沙盒中执行（路径隔离 + 可选懒加载）。</p>
       <div class="se-grid">
         <div class="se-field"><label for="approval">工具审批</label><select id="approval"><option value="smart">智能（只读自动）</option><option value="readonly">只读自动</option><option value="always">全部需确认</option><option value="never">从不确认（不安全）</option></select></div>
         <div class="se-field"><label>&nbsp;</label><label><input type="checkbox" id="allow-shell" /> 允许 Shell 命令</label></div>
       </div>
-      <label style="display:block;margin-top:12px;font-size:13px;"><input type="checkbox" id="adaptive-output" /> 网页对话输出截断时自动续写</label>
+      <label style="display:block;margin-top:12px;font-size:13px;"><input type="checkbox" id="sandbox-lazy" /> 沙盒懒加载（首次 run_shell 时再初始化）</label>
+      <label style="display:block;margin-top:8px;font-size:13px;"><input type="checkbox" id="adaptive-output" /> 网页对话输出截断时自动续写</label>
     </section>
     <div class="se-mcp-head">
       <h2 class="se-section" style="margin:0;">MCP 服务器</h2>
@@ -58,6 +58,6 @@
     <button type="button" class="se-btn" id="btn-cancel">取消</button>
     <button type="button" class="se-btn se-btn-primary" id="btn-save">保存</button>
   </footer>
-  <script src="settings-embed.js?v=3"></script>
+  <script src="settings-embed.js?v=6"></script>
 </body>
 </html>

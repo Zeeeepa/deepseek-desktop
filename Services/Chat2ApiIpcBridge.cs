@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
 using DeepSeekBrowser.Models;
-using DeepSeekBrowser.Services.DeepSeekTui;
 
 namespace DeepSeekBrowser.Services;
 
@@ -104,9 +103,9 @@ public sealed class Chat2ApiIpcBridge
             "proxy:getStatus" => ProxyStatus(),
             "proxy:getStatistics" => EmptyProxyStatistics(),
             "config:get" => BuildChat2ApiConfig(),
-            "config:update" => ConfigUpdate(args),
+            "config:update" => await ConfigUpdate(args),
             "store:get" => StoreGet(args),
-            "store:set" => StoreSet(args),
+            "store:set" => await StoreSet(args),
             "store:delete" => StoreDelete(args),
             "store:clearAll" => StoreClearAll(),
             "store:retryInit" => new { success = true },
@@ -136,7 +135,7 @@ public sealed class Chat2ApiIpcBridge
             "accounts:getCredits" => null,
             "accounts:clearChats" => new { success = true },
             "session:getConfig" => SessionConfig(),
-            "session:updateConfig" => SessionUpdateConfig(args),
+            "session:updateConfig" => await SessionUpdateConfig(args),
             "session:getAll" => ListSessions(),
             "session:getActive" => ListSessions(activeOnly: true),
             "session:getById" => SessionById(args),
@@ -166,8 +165,8 @@ public sealed class Chat2ApiIpcBridge
             "managementApi:generateSecret" => Guid.NewGuid().ToString("N"),
             "contextManagement:getConfig" => ContextManagementConfig(),
             "contextManagement:updateConfig" => await ContextManagementUpdateAsync(args, ct),
-            "toolCalling:getStatus" => new { enabled = false },
-            "toolCalling:runSmoke" => new { success = false, error = new { message = "内嵌模式暂不支持" } },
+            "toolCalling:getStatus" => ToolCallingGetStatus(),
+            "toolCalling:runSmoke" => await ToolCallingRunSmokeAsync(args, ct),
             "app:getVersion" => "1.3.0-edge",
             "app:checkUpdate" => new
             {
@@ -290,7 +289,7 @@ public sealed class Chat2ApiIpcBridge
             enableApiKey = _config.EnableLocalApiKeyAuth,
             oauthProxyMode = "none",
             sessionConfig = SessionConfig(),
-            toolCallingConfig = new { enabled = false },
+            toolCallingConfig = GetToolCallingConfig(),
             managementApi = ManagementApiConfig(),
             contextManagement = ContextManagementConfig(),
             language = "zh-CN",
@@ -301,9 +300,6 @@ public sealed class Chat2ApiIpcBridge
     private object BuildDesktopStackInfo()
     {
         var snap = Chat2ApiProviderService.Build(_config);
-        var tuiPort = _config.DeepSeekTuiRuntimePort > 0
-            ? _config.DeepSeekTuiRuntimePort
-            : DeepSeekTuiHost.DefaultPort;
         var loggedIn = !string.IsNullOrWhiteSpace(_config.WebUserToken);
 
         return new
@@ -316,8 +312,9 @@ public sealed class Chat2ApiIpcBridge
             externalApiBaseUrl = _config.EnableExternalOpenAiApi
                 ? InternalChatChannel.GetExternalApiBaseUrl(_config)
                 : null,
-            tuiRuntimeUrl = $"http://127.0.0.1:{tuiPort}",
-            tuiConfigPath = DeepSeekTuiConfigSync.ConfigPath,
+            harnessEngine = "native",
+            tuiRuntimeUrl = snap.TuiRuntimeUrl,
+            tuiConfigPath = AgentDesktopConfigSync.ConfigPath,
             integrationFile = Chat2ApiProviderService.IntegrationFilePath,
             defaultWorkMode = _config.DefaultWorkMode,
             agentStrategy = _config.DefaultAgentStrategy,
@@ -339,8 +336,100 @@ public sealed class Chat2ApiIpcBridge
 
     private async Task ApplyConfigPatchAsync(JsonElement patch)
     {
+        if (patch.TryGetProperty("toolCallingConfig", out var toolCalling) &&
+            toolCalling.ValueKind == JsonValueKind.Object)
+            _uiStore["toolCallingConfig"] = toolCalling.Clone();
+
         Chat2ApiEmbeddedConfigApplicator.ApplyPatch(_config, patch);
         await PersistAndSyncAsync();
+    }
+
+    private JsonElement GetToolCallingConfigElement()
+    {
+        if (_uiStore.TryGetValue("toolCallingConfig", out var stored) &&
+            stored.ValueKind == JsonValueKind.Object)
+            return stored;
+
+        return JsonSerializer.SerializeToElement(CreateDefaultToolCallingConfig(), JsonOptions);
+    }
+
+    private object GetToolCallingConfig() => GetToolCallingConfigElement();
+
+    private static object CreateDefaultToolCallingConfig() => new
+    {
+        enabled = true,
+        mode = "auto",
+        clientAdapterId = "standard-openai-tools",
+        diagnosticsEnabled = false,
+        advanced = new { promptPreviewEnabled = false, customPromptTemplate = (string?)null }
+    };
+
+    private object ToolCallingGetStatus()
+    {
+        var cfg = GetToolCallingConfigElement();
+        var enabled = ToolCallingIsEnabled(cfg);
+        return new
+        {
+            enabled,
+            config = cfg,
+            clientAdapters = new[]
+            {
+                new { id = "standard-openai-tools", label = "Standard OpenAI Tools", status = "ready" },
+                new { id = "cherry-studio-mcp", label = "Cherry Studio MCP", status = "ready" }
+            },
+            providerSupport = new[]
+            {
+                new { providerId = "deepseek", label = "DEEPSEEK", managed = true, protocolId = "managed_xml", status = "supported" },
+                new { providerId = "kimi", label = "KIMI", managed = true, protocolId = "managed_xml", status = "supported" },
+                new { providerId = "glm", label = "GLM", managed = true, protocolId = "managed_xml", status = "supported" },
+                new { providerId = "qwen", label = "QWEN", managed = true, protocolId = "managed_xml", status = "supported" },
+                new { providerId = "mimo", label = "MIMO", managed = true, protocolId = "managed_xml", status = "supported" }
+            }
+        };
+    }
+
+    private async Task<object> ToolCallingRunSmokeAsync(JsonElement[] args, CancellationToken ct)
+    {
+        if (!ToolCallingIsEnabled(GetToolCallingConfigElement()))
+            return new { success = false, error = new { message = "托管工具调用未启用，请将模式设为 auto 或 force。" } };
+
+        if (string.IsNullOrWhiteSpace(_config.WebUserToken))
+            return new { success = false, error = new { message = "请先在 DeepSeek 主窗口「普通对话」登录 DeepSeek。" } };
+
+        try
+        {
+            var messages = new List<ChatMessage>
+            {
+                new() { Role = "user", Content = "请只回复一个词：OK" }
+            };
+            var result = await _web.WebChatAsync(
+                messages,
+                _config.Model,
+                thinking: false,
+                search: false,
+                ct,
+                _config.WebUserToken).ConfigureAwait(false);
+
+            var text = result.Content?.Trim();
+            var ok = !string.IsNullOrEmpty(text) && !string.Equals(text, "(无回复)", StringComparison.Ordinal);
+            return ok
+                ? new { success = true }
+                : new { success = false, error = new { message = "网页会话未返回正文，请确认已登录并重试。" } };
+        }
+        catch (Exception ex)
+        {
+            return new { success = false, error = new { message = ex.Message } };
+        }
+    }
+
+    private static bool ToolCallingIsEnabled(JsonElement el)
+    {
+        if (el.ValueKind != JsonValueKind.Object)
+            return true;
+
+        var enabled = !el.TryGetProperty("enabled", out var en) || en.GetBoolean();
+        var mode = el.TryGetProperty("mode", out var modeEl) ? modeEl.GetString() : "auto";
+        return enabled && !string.Equals(mode, "off", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task PersistAndSyncAsync(CancellationToken ct = default)

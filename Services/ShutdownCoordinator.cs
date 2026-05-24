@@ -1,4 +1,4 @@
-using DeepSeekBrowser.Services.DeepSeekTui;
+using DeepSeekBrowser.Services.Harness.Sandbox;
 
 namespace DeepSeekBrowser.Services;
 
@@ -30,17 +30,8 @@ internal static class ShutdownCoordinator
             }
             catch
             {
-                // MCP / TUI 断开超时不阻止退出
+                // MCP 断开超时不阻止退出
             }
-        }
-
-        try
-        {
-            DeepSeekTuiProcessCleanup.ShutdownAll();
-        }
-        catch
-        {
-            // ignore
         }
 
         var api = _localApi;
@@ -48,6 +39,15 @@ internal static class ShutdownCoordinator
         try
         {
             api?.Dispose();
+        }
+        catch
+        {
+            // ignore
+        }
+
+        try
+        {
+            HarnessSandboxProviderRegistry.Shutdown();
         }
         catch
         {

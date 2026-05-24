@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Automations</title>
+  <link rel="stylesheet" href="https://ds-inject.local/ds-theme.css" />
+  <link rel="stylesheet" href="automations-embed.css" />
+</head>
+<body>
+  <div class="au-page">
+    <header class="au-hero">
+      <div class="au-flow" aria-hidden="true">
+        <div class="au-flow-col">
+          <span class="au-pill au-pill-trigger">触发器</span>
+          <span class="au-chip">定时</span>
+          <span class="au-chip">GitHub</span>
+          <span class="au-chip">Slack</span>
+          <span class="au-chip">Webhook</span>
+        </div>
+        <span class="au-flow-op">→</span>
+        <div class="au-flow-col">
+          <span class="au-pill au-pill-action">动作</span>
+          <span class="au-chip">运行 Agent</span>
+          <span class="au-chip">通知</span>
+        </div>
+      </div>
+      <div class="au-hero-text">
+        <h1>Automations</h1>
+        <p>常驻 Agent：按时间表或 Webhook 自动运行，无需手动发消息。对标 <a href="https://cursor.com/docs/cloud-agent/automations" target="_blank" rel="noopener">Cursor Automations</a> 的桌面实现。</p>
+        <p class="au-webhook-hint" id="webhook-base" hidden></p>
+      </div>
+    </header>
+
+    <div class="au-toolbar">
+      <button type="button" class="au-btn au-btn-primary" id="btn-new">新建自动化</button>
+      <button type="button" class="au-btn" id="btn-refresh">刷新</button>
+    </div>
+
+    <section class="au-list" id="automation-list" aria-label="自动化列表"></section>
+    <p class="au-empty" id="list-empty" hidden>暂无自动化。创建第一个，让 Agent 在后台替你工作。</p>
+
+    <section class="au-editor" id="editor" hidden>
+      <h2 class="au-editor-title" id="editor-title">新建自动化</h2>
+      <div class="au-field">
+        <label for="f-name">名称</label>
+        <input id="f-name" type="text" placeholder="例如：每日修复 Bug" />
+      </div>
+      <div class="au-field">
+        <label for="f-desc">描述</label>
+        <input id="f-desc" type="text" placeholder="可选" />
+      </div>
+      <div class="au-grid">
+        <div class="au-field">
+          <label for="f-trigger">触发器</label>
+          <select id="f-trigger">
+            <option value="schedule">定时 Schedule</option>
+            <option value="webhook">Webhook</option>
+            <option value="github">GitHub 事件</option>
+            <option value="slack">Slack 事件</option>
+            <option value="manual">仅手动 / 测试</option>
+          </select>
+        </div>
+        <div class="au-field" id="wrap-schedule">
+          <label for="f-schedule">计划</label>
+          <select id="f-schedule">
+            <option value="hourly">每小时</option>
+            <option value="daily">每天 (UTC)</option>
+            <option value="weekly">每周 (UTC)</option>
+          </select>
+        </div>
+        <div class="au-field" id="wrap-time">
+          <label for="f-time">时间 UTC</label>
+          <input id="f-time" type="time" value="09:00" />
+        </div>
+        <div class="au-field" id="wrap-dow" hidden>
+          <label for="f-dow">星期</label>
+          <select id="f-dow">
+            <option value="1">周一</option>
+            <option value="2">周二</option>
+            <option value="3">周三</option>
+            <option value="4">周四</option>
+            <option value="5">周五</option>
+            <option value="6">周六</option>
+            <option value="0">周日</option>
+          </select>
+        </div>
+      </div>
+      <div class="au-field" id="wrap-github" hidden>
+        <label for="f-github">GitHub 事件</label>
+        <input id="f-github" type="text" placeholder="pull_request.opened" />
+      </div>
+      <div class="au-field" id="wrap-slack" hidden>
+        <label for="f-slack">Slack 事件</label>
+        <input id="f-slack" type="text" placeholder="message.posted" />
+      </div>
+      <div class="au-field">
+        <label for="f-strategy">Harness 策略</label>
+        <select id="f-strategy">
+          <option value="execute">Execute</option>
+          <option value="blueprint">Blueprint</option>
+        </select>
+      </div>
+      <div class="au-field">
+        <label for="f-instructions">指令（支持 <code>{{ trigger.field }}</code>）</label>
+        <textarea id="f-instructions" rows="6" placeholder="例如：根据 {{ trigger.body.title }} 审查并修复问题…"></textarea>
+      </div>
+      <div class="au-field">
+        <label for="f-webhook-secret">Webhook 密钥（可选）</label>
+        <input id="f-webhook-secret" type="text" spellcheck="false" placeholder="请求头 X-Automation-Secret" />
+      </div>
+      <p class="au-hook-url" id="hook-url" hidden></p>
+      <div class="au-editor-actions">
+        <button type="button" class="au-btn au-btn-primary" id="btn-save">保存</button>
+        <button type="button" class="au-btn" id="btn-test">测试运行</button>
+        <button type="button" class="au-btn" id="btn-cancel-edit">取消</button>
+      </div>
+    </section>
+
+    <section class="au-runs" id="runs-panel" hidden>
+      <h2 class="au-runs-title">运行历史 <span id="runs-for-name"></span></h2>
+      <div id="runs-list"></div>
+    </section>
+  </div>
+  <script src="automations-embed.js?v=1"></script>
+</body>
+</html>

@@ -1,17 +1,15 @@
 using DeepSeekBrowser.Models;
-using DeepSeekBrowser.Services.DeepSeekTui;
 
 namespace DeepSeekBrowser.Services;
 
 /// <summary>
-/// 桌面内嵌栈：本地对话服务 + DeepSeek-TUI 运行时，启动后自动联通。
+/// 桌面内嵌栈：本地对话服务 + 网页桥，启动后自动联通（Agent 走进程内 Harness）。
 /// </summary>
 public static class EmbeddedStackCoordinator
 {
     public static async Task EnsureLinkedAsync(
         AppConfig config,
         LocalOpenAiServer localApi,
-        DeepSeekTuiHost? tuiHost,
         WebInjectService web,
         CancellationToken ct = default)
     {
@@ -23,18 +21,5 @@ public static class EmbeddedStackCoordinator
 
         await EmbeddedStackBridgeLinker.LinkWebBridgeAsync(config, web, ct)
             .ConfigureAwait(false);
-
-        if (tuiHost is null)
-            return;
-
-        try
-        {
-            await DeepSeekTuiBundle.EnsureBinariesAsync(config, ct).ConfigureAwait(false);
-            await tuiHost.EnsureRunningAsync(config, ct).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Agent 发消息时会再次尝试
-        }
     }
 }

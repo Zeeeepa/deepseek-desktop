@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using DeepSeekBrowser.Models;
-using DeepSeekBrowser.Services.DeepSeekTui;
+using DeepSeekBrowser.Services.Harness;
 using DeepSeekBrowser.Views;
 
 namespace DeepSeekBrowser.Services;
@@ -70,19 +70,11 @@ internal sealed class EmbeddedSettingsSupport
                     var doctorText = await RunDoctorAsync();
                     await ReplyAsync(msg, "settingsDoctorResult", new { text = doctorText });
                     break;
-                case "settingsBuildTui":
-                    var buildText = await BuildTuiAsync(msg);
-                    await ReplyAsync(msg, "settingsBuildTuiResult", new { text = buildText });
-                    break;
                 case "settingsOpenDeepSeekHome":
                     OpenDeepSeekHome();
                     break;
                 case "settingsOpenDocs":
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "https://deepseek-tui.com/zh/docs",
-                        UseShellExecute = true
-                    });
+                    OpenHarnessDocs();
                     break;
                 case "settingsCopyConfigPath":
                     Clipboard.SetText(ConfigStore.ConfigFilePath);
@@ -110,21 +102,12 @@ internal sealed class EmbeddedSettingsSupport
             " · 网页登录后自动同步 Token";
 
         var serviceSummary =
-            "对话桥接与 Agent 引擎已在后台运行；网页登录 Token 自动同步至 DeepSeek-TUI。";
+            "对话桥接与 Agent Harness 已在进程内运行；网页登录 Token 自动同步至 Chat2API。";
 
-        var port = config.DeepSeekTuiRuntimePort > 0 ? config.DeepSeekTuiRuntimePort : 7878;
-        var bundled = DeepSeekTuiBundle.IsBundledComplete ? "已内置" : "未内置（将自动下载）";
-        var sourceRoot = DeepSeekTuiSourceBuild.ResolveRepositoryRoot(config);
-        var sourceHint = sourceRoot is null
-            ? "未检测到本地源码"
-            : (DeepSeekTuiSourceBuild.TryResolveReleaseBinaries(config) is not null
-                ? "已编译 release"
-                : "源码已找到，未编译");
-        var tuiInfo =
-            "DeepSeek-TUI Agent 引擎（内置）· Plan / Agent / YOLO\n" +
-            $"Runtime API：127.0.0.1:{port} · 二进制：{bundled} · 源码：{sourceHint}\n" +
-            "LLM：内嵌 Chat2API（网页 Token）→ ~/.deepseek/config.toml\n" +
-            "模式：/react → Agent · /plan → Plan";
+        var harnessInfo =
+            "DSD Harness（C# 进程内）· Execute / Blueprint 工作流\n" +
+            "LLM：网页桥 + Chat2API · 工具：文件/Shell + MCP\n" +
+            $"沙盒：本地工作区（懒加载={(config.AgentSandboxLazyInit ? "是" : "否")}）";
 
         return new
         {
@@ -135,10 +118,10 @@ internal sealed class EmbeddedSettingsSupport
             maxAgentSteps = config.MaxAgentSteps,
             maxSubAgentSteps = config.MaxSubAgentSteps,
             defaultAgentStrategy = config.DefaultAgentStrategy,
+            agentSandboxLazyInit = config.AgentSandboxLazyInit,
             chat2ApiSummary,
             serviceSummary,
-            tuiInfo,
-            tuiSourcePath = config.DeepSeekTuiSourcePath ?? "",
+            harnessInfo,
             agentWorkspaceRoot = config.AgentWorkspaceRoot ?? "",
             agentAllowShell = config.AgentAllowShell,
             enableAdaptiveOutputEscalation = config.EnableAdaptiveOutputEscalation,
@@ -174,9 +157,7 @@ internal sealed class EmbeddedSettingsSupport
         if (msg.TryGetProperty("maxSubAgentSteps", out var subEl) && subEl.TryGetInt32(out var subSteps))
             config.MaxSubAgentSteps = Math.Clamp(subSteps, 1, 50);
         if (msg.TryGetProperty("defaultAgentStrategy", out var stratEl))
-            config.DefaultAgentStrategy = stratEl.GetString() == "plan" ? AgentStrategies.Plan : AgentStrategies.React;
-        if (msg.TryGetProperty("tuiSourcePath", out var srcEl))
-            config.DeepSeekTuiSourcePath = srcEl.GetString() ?? "";
+            config.DefaultAgentStrategy = HarnessStrategyResolver.Normalize(stratEl.GetString());
         if (msg.TryGetProperty("agentWorkspaceRoot", out var wsEl))
             config.AgentWorkspaceRoot = wsEl.GetString() ?? "";
         if (msg.TryGetProperty("agentAllowShell", out var shellEl))
@@ -188,9 +169,11 @@ internal sealed class EmbeddedSettingsSupport
             config.AgentApprovalMode = apprEl.GetString() ?? "smart";
             config.AgentAutoApproveReadOnly = config.AgentApprovalMode is "smart" or "readonly";
         }
+        if (msg.TryGetProperty("agentSandboxLazyInit", out var sbLazyEl))
+            config.AgentSandboxLazyInit = sbLazyEl.GetBoolean();
 
         _setConfig(config);
-        DeepSeekTuiConfigSync.Apply(config);
+        AgentDesktopConfigSync.Apply(config);
         ConfigStore.Save(config);
     }
 
@@ -272,29 +255,44 @@ internal sealed class EmbeddedSettingsSupport
     private async Task<string> RunDoctorAsync()
     {
         var config = _getConfig();
-        await DeepSeekTuiBundle.EnsureBinariesAsync(config);
-        DeepSeekTuiConfigSync.Apply(config);
-        using var doc = await DeepSeekTuiBundle.TryDoctorJsonAsync(config.DeepSeekTuiExecutablePath);
-        return doc is null ? "doctor 无输出，请确认已登录网页或配置 API。" : doc.RootElement.GetRawText();
+        AgentDesktopConfigSync.Apply(config);
+        var loggedIn = !string.IsNullOrWhiteSpace(config.WebUserToken);
+        var mcp = config.McpServers.Count(s => s.Enabled);
+        var text =
+            $"Harness: native (in-process)\n" +
+            $"默认工作流: {config.DefaultAgentStrategy}\n" +
+            $"网页登录: {(loggedIn ? "是" : "否")}\n" +
+            $"MCP 已启用: {mcp}\n" +
+            $"沙盒: 本地工作区（懒加载={(config.AgentSandboxLazyInit ? "是" : "否")}）\n" +
+            $"工作区: {(string.IsNullOrWhiteSpace(config.AgentWorkspaceRoot) ? "默认" : config.AgentWorkspaceRoot)}\n" +
+            $"~/.deepseek: {AgentDesktopConfigSync.HomeDirectory}";
+        return text;
     }
 
-    private async Task<string> BuildTuiAsync(JsonElement msg)
+    private static void OpenHarnessDocs()
     {
-        var config = _getConfig();
-        if (msg.TryGetProperty("tuiSourcePath", out var srcEl))
-            config.DeepSeekTuiSourcePath = srcEl.GetString() ?? "";
-        var repo = DeepSeekTuiSourceBuild.ResolveRepositoryRoot(config);
-        if (repo is null)
-            throw new InvalidOperationException("请填写有效的 DeepSeek-TUI 源码根目录（含 Cargo.toml）。");
-        await DeepSeekTuiSourceBuild.BuildReleaseAsync(repo);
-        await DeepSeekTuiSourceBuild.TryCopyReleaseToToolsAsync(config);
-        _setConfig(config);
-        return "已编译并复制到 Assets/tools。\n请重新运行 build.ps1 部署桌面端，或重启应用。";
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "docs", "HARNESS.md"),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "docs", "HARNESS.md"))
+        };
+        foreach (var path in candidates)
+        {
+            if (!File.Exists(path)) continue;
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "https://github.com",
+            UseShellExecute = true
+        });
     }
 
     private static void OpenDeepSeekHome()
     {
-        var dir = DeepSeekTuiConfigSync.HomeDirectory;
+        var dir = AgentDesktopConfigSync.HomeDirectory;
         Directory.CreateDirectory(dir);
         Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
     }

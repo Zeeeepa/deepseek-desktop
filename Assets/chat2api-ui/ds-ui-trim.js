@@ -115,19 +115,43 @@
     });
   }
 
-  function injectEmbeddedBanner() {
-    if (document.getElementById("ds-embedded-banner")) return;
-    var topbar = document.querySelector(".glass-topbar");
-    if (!topbar) return;
-    var bar = document.createElement("span");
-    bar.id = "ds-embedded-banner";
-    bar.setAttribute("data-ds-embedded", "1");
-    bar.style.cssText =
-      "margin:0 12px 0 auto;padding:4px 10px;border-radius:999px;font-size:11px;color:#4d6bfe;background:#eef2ff;border:1px solid #c7d2fe;white-space:nowrap;";
-    bar.textContent = "内嵌模式 · 进程内直连";
-    var anchor = topbar.querySelector(".font-bold")?.parentElement || topbar;
-    if (anchor && anchor.parentElement) anchor.parentElement.appendChild(bar);
-    else topbar.appendChild(bar);
+  function isChat2ApiHostPage() {
+    var h = (location.hostname || "").toLowerCase();
+    var p = location.pathname || "";
+    return h === "ds-chat2api.local" || (h === "ds-agent.local" && /\/chat2api\//i.test(p));
+  }
+
+  function injectAgentBackButton() {
+    if (!isChat2ApiHostPage()) return;
+    if (window.parent !== window) return;
+    if (document.getElementById("ds-agent-back-btn")) return;
+    var btn = document.createElement("button");
+    btn.id = "ds-agent-back-btn";
+    btn.type = "button";
+    btn.textContent = "← 返回 Agent";
+    btn.style.cssText =
+      "position:fixed;top:10px;left:12px;z-index:99999;padding:8px 14px;border-radius:8px;" +
+      "border:1px solid #c7d2fe;background:#fff;color:#1e40af;font-size:13px;cursor:pointer;" +
+      "box-shadow:0 2px 8px rgba(0,0,0,.08);";
+    btn.addEventListener("click", function () {
+      var body = JSON.stringify({ type: "openAgentFromChat2Api", __dsEmbed: true });
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(body);
+      } else if (window.parent && window.parent !== window) {
+        window.parent.postMessage(body, "*");
+      }
+    });
+    document.body.appendChild(btn);
+  }
+
+  function removeStackBar() {
+    var bar = document.getElementById("ds-desktop-stack-bar");
+    if (bar) bar.remove();
+    document.querySelectorAll(".ds-desktop-stack-bar").forEach(function (el) {
+      el.remove();
+    });
+    var banner = document.getElementById("ds-embedded-banner");
+    if (banner) banner.remove();
   }
 
   function hideLanguageControls() {
@@ -163,7 +187,8 @@
     hideTopbarProxyControls();
     hideDashboardProxyWidgets();
     hideSettingsProxySections();
-    injectEmbeddedBanner();
+    injectAgentBackButton();
+    removeStackBar();
 
     document.querySelectorAll('a[href="/proxy"], a[href="#/proxy"], a[href="/about"], a[href="#/about"], [href*="/proxy"], [href*="/about"]').forEach(function (a) {
       hide(navRoot(a));

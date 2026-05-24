@@ -1,5 +1,5 @@
 # 手动验收清单（WPF 桌面端）
-# 用法：先运行 .\build.ps1，再双击桌面 DeepSeek_desktop 快捷方式
+# 用法：先运行 .\build.ps1，再运行 .\publish\DeepSeek.exe
 
 Write-Host @"
 DeepSeek Desktop 手动验收清单

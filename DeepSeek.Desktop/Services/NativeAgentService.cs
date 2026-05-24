@@ -1,7 +1,7 @@
 using DeepSeek.Desktop.ViewModels;
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
-using DeepSeekBrowser.Services.DeepSeekTui;
+using DeepSeekBrowser.Services.Harness;
 using Microsoft.UI.Xaml.Controls;
 
 namespace DeepSeek.Desktop.Services;
@@ -13,6 +13,7 @@ public sealed class NativeAgentService
     public event EventHandler<AgentRunStateEventArgs>? OnRunStateChanged;
 
     private CancellationTokenSource? _cts;
+    private DeepSeekHarnessRunner? _harness;
 
     public void Stop() => _cts?.Cancel();
 
@@ -46,29 +47,35 @@ public sealed class NativeAgentService
         config.AgentWebSearch = webSearch;
         ConfigStore.Save(config);
 
-        var tuiHost = host.TuiHost;
-        var runner = new DeepSeekTuiAgentRunner(tuiHost, RequestApprovalAsync);
+        var webChat = new WinUiWebChatBridgeHostAdapter(host);
+        _harness ??= new DeepSeekHarnessRunner(webChat, new McpHub(), RequestApprovalAsync);
         using var featureScope = Chat2ApiFeatureScope.Begin(deepThink, webSearch);
         host.BeginAgentLlmBridge();
 
         try
         {
-            var result = await runner.RunAsync(
-                config,
-                task,
-                strategy,
-                existingThreadId: null,
-                onLog: line => OnMessage?.Invoke(this, new AgentMessageEventArgs("log", line, "log")),
-                onAnswerDelta: delta =>
+            var result = await _harness.RunAsync(
+                new HarnessRunRequest
                 {
-                    if (!string.IsNullOrEmpty(delta))
-                        OnStreamDelta?.Invoke(this, new AgentStreamDeltaEventArgs(delta, append: true, isThinking: false));
+                    Config = config,
+                    Prompt = task,
+                    Strategy = strategy,
+                    RefFileIds = Array.Empty<string>()
                 },
-                ct,
-                onActivity: a => OnMessage?.Invoke(this,
-                    new AgentMessageEventArgs("tool", $"{a.Verb} {a.Target}", a.Detail)),
-                onThinking: (text, append) =>
-                    OnStreamDelta?.Invoke(this, new AgentStreamDeltaEventArgs(text, append, isThinking: true)));
+                new HarnessRunCallbacks
+                {
+                    OnLog = line => OnMessage?.Invoke(this, new AgentMessageEventArgs("log", line, "log")),
+                    OnAnswerDelta = (delta, append) =>
+                    {
+                        if (!string.IsNullOrEmpty(delta))
+                            OnStreamDelta?.Invoke(this, new AgentStreamDeltaEventArgs(delta, append, isThinking: false));
+                    },
+                    OnThinking = (text, append) =>
+                        OnStreamDelta?.Invoke(this, new AgentStreamDeltaEventArgs(text, append, isThinking: true)),
+                    OnActivity = a => OnMessage?.Invoke(this,
+                        new AgentMessageEventArgs("tool", $"{a.Verb} {a.Target}", a.Detail))
+                },
+                ct);
 
             OnRunStateChanged?.Invoke(this,
                 new AgentRunStateEventArgs(AgentRunState.Completed, "完成", result.Answer));
