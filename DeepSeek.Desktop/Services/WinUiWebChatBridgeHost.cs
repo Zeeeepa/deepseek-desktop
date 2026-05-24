@@ -299,7 +299,8 @@ public sealed class WinUiWebChatBridgeHost
                 search,
                 modelType = "expert",
                 refFileIds = refFileIds.ToArray(),
-                chatSessionId = webChatSessionId
+                chatSessionId = webChatSessionId,
+                suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
             });
             var expr =
                 $"window.dsDesktopBridge.webChatCompletion({msgJson}, {JsonSerializer.Serialize(model)}, {optsJson})";
@@ -341,7 +342,8 @@ public sealed class WinUiWebChatBridgeHost
             search,
             modelType = "expert",
             refFileIds = refFileIds.ToArray(),
-            chatSessionId = webChatSessionId
+            chatSessionId = webChatSessionId,
+            suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
         });
         var streamIdJson = JsonSerializer.Serialize(hub.StreamId);
         var modelJson = JsonSerializer.Serialize(model);

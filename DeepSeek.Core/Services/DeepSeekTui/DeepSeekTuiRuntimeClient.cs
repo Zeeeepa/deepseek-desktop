@@ -57,6 +57,29 @@ public sealed class DeepSeekTuiRuntimeClient
                ?? throw new InvalidOperationException("创建线程失败：缺少 id");
     }
 
+    public async Task<DeepSeekTuiThreadInfo?> GetThreadAsync(string threadId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+            return null;
+
+        using var resp = await _http.GetAsync(
+                WithRuntimeTokenQuery($"v1/threads/{Uri.EscapeDataString(threadId)}"),
+                ct)
+            .ConfigureAwait(false);
+        await EnsureSuccessAsync(resp, ct).ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct), cancellationToken: ct)
+            .ConfigureAwait(false);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("thread", out var thread) && thread.ValueKind == JsonValueKind.Object)
+            root = thread;
+
+        var id = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : threadId;
+        var latestTurnId = root.TryGetProperty("latest_turn_id", out var turnEl)
+            ? turnEl.GetString()
+            : null;
+        return new DeepSeekTuiThreadInfo(id ?? threadId, latestTurnId);
+    }
+
     public async Task<string> StartTurnAsync(string threadId, string prompt, CancellationToken ct)
     {
         var body = new { prompt };
@@ -154,7 +177,18 @@ public sealed class DeepSeekTuiRuntimeClient
             JsonElement payload = root;
             if (root.TryGetProperty("payload", out var pl))
                 payload = pl;
-            return new RuntimeSseEvent(ev ?? "", payload.Clone());
+
+            var turnId = root.TryGetProperty("turn_id", out var turnEl) && turnEl.ValueKind == JsonValueKind.String
+                ? turnEl.GetString()
+                : null;
+            var threadId = root.TryGetProperty("thread_id", out var threadEl) && threadEl.ValueKind == JsonValueKind.String
+                ? threadEl.GetString()
+                : null;
+            ulong seq = 0;
+            if (root.TryGetProperty("seq", out var seqEl) && seqEl.TryGetUInt64(out var parsedSeq))
+                seq = parsedSeq;
+
+            return new RuntimeSseEvent(ev ?? "", payload.Clone(), turnId, threadId, seq);
         }
         catch
         {
@@ -191,4 +225,11 @@ public sealed class DeepSeekTuiRuntimeClient
         s.Length <= max ? s : s[..max] + "…";
 }
 
-public readonly record struct RuntimeSseEvent(string Name, JsonElement Payload);
+public readonly record struct RuntimeSseEvent(
+    string Name,
+    JsonElement Payload,
+    string? TurnId = null,
+    string? ThreadId = null,
+    ulong Seq = 0);
+
+public sealed record DeepSeekTuiThreadInfo(string Id, string? LatestTurnId);

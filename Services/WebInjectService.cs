@@ -211,6 +211,8 @@ public sealed class WebInjectService : IWebInjectBridge
         try
         {
             var json = e.TryGetWebMessageAsString();
+            if (string.IsNullOrWhiteSpace(json))
+                json = e.WebMessageAsJson;
             if (string.IsNullOrWhiteSpace(json)) return;
             using var doc = JsonDocument.Parse(json);
             MessageReceived?.Invoke(this, doc.RootElement.Clone());
@@ -223,6 +225,13 @@ public sealed class WebInjectService : IWebInjectBridge
 
     public Task PostToPageAsync(object message) =>
         RunOnUiAsync(() => PostToPageOnUiAsync(message));
+
+    public Task<string?> EvaluateOnPageAsync(string javaScriptExpression) =>
+        RunOnUiAsync(async () =>
+        {
+            if (_webView.CoreWebView2 is null) return null;
+            return await _webView.CoreWebView2.ExecuteScriptAsync(javaScriptExpression);
+        });
 
     /// <summary>向 WebView 所有 frame 广播 postMessage（内嵌 iframe 的 Chat2API / 设置页使用）。</summary>
     public Task PostWebMessageAsync(object message) =>
@@ -527,7 +536,8 @@ public sealed class WebInjectService : IWebInjectBridge
             search,
             modelType = "expert",
             refFileIds = AgentRefFileIds,
-            chatSessionId = webChatSessionId
+            chatSessionId = webChatSessionId,
+            suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
         });
         await InjectWebUserTokenOnUiAsync(webUserToken);
 

@@ -403,10 +403,21 @@
     } else if (typeof parsed.v === "string") {
       const c = cleanStreamPiece(parsed.v);
       if (!c) return;
-      if (state.currentPath === "thinking") {
+      const isThinking =
+        (parsed.p && String(parsed.p).includes("thinking")) || state.currentPath === "thinking";
+      if (isThinking && parsed.p && String(parsed.p).includes("thinking")) {
+        state.currentPath = "thinking";
+        state.accumulatedThinking += c;
+        if (onDelta) onDelta("reasoning", c);
+      } else if (parsed.p === "response/content" || (!isThinking && parsed.p !== "response/thinking")) {
+        state.currentPath = "content";
+        state.accumulatedContent += c;
+        if (onDelta) onDelta("content", c);
+      } else if (state.currentPath === "thinking") {
         state.accumulatedThinking += c;
         if (onDelta) onDelta("reasoning", c);
       } else {
+        state.currentPath = "content";
         state.accumulatedContent += c;
         if (onDelta) onDelta("content", c);
       }
@@ -524,8 +535,11 @@
     return { response: r, sessionId, model: model || "deepseek-chat" };
   }
 
-  function buildChatResult(content, thinking, sessionId, model) {
-    const parsed = parseToolCalls(content);
+  function buildChatResult(content, thinking, sessionId, model, opts) {
+    const suppressTools = !!(opts && opts.suppressToolCalls);
+    const parsed = suppressTools
+      ? { content: (content || "").trim(), toolCalls: [] }
+      : parseToolCalls(content);
     const textOut = parsed.toolCalls.length ? null : parsed.content || "(无回复)";
     const likelyTruncated = detectLikelyTruncated(textOut);
     return {
@@ -542,7 +556,7 @@
   async function webChatCompletion(messages, model, opts) {
     const { response, sessionId, model: m } = await fetchWebCompletion(messages, model, opts);
     const { content, thinking } = await parseStreamText(response.body.getReader());
-    return buildChatResult(content, thinking, sessionId, m);
+    return buildChatResult(content, thinking, sessionId, m, opts);
   }
 
   async function webChatCompletionStreaming(streamId, messages, model, opts) {
@@ -552,7 +566,7 @@
       postBridgeStream(streamId, { type: "delta", kind, text });
     };
     const { content, thinking } = await parseStreamText(response.body.getReader(), onDelta);
-    const result = buildChatResult(content, thinking, sessionId, m);
+    const result = buildChatResult(content, thinking, sessionId, m, opts);
     postBridgeStream(streamId, { type: "done", result });
     return result;
   }

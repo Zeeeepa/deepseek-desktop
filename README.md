@@ -1,8 +1,14 @@
 # DeepSeek Desktop
 
-将 [DeepSeek 网页版](https://chat.deepseek.com) 封装为 Windows 桌面应用：**普通对话**嵌入官网；**Agent 工作台**与 **设置 / API 管理** 在应用内完成，核心逻辑集中在 `DeepSeek.Core`（DeepSeek-TUI 运行时 + 内嵌 Chat2API 管理台 + 网页会话桥）。
+[![Windows](https://img.shields.io/badge/平台-Windows%2010%2F11-blue)](https://github.com/fanstars2318/deepseek-desktop)
+[![.NET](https://img.shields.io/badge/.NET-9%20%2F%2010-512BD4)](https://dotnet.microsoft.com/)
+[![DeepSeek-TUI](https://img.shields.io/badge/Agent-DeepSeek--TUI%200.8.39-8B5CF6)](third-party/DeepSeek-TUI)
+
+将 [DeepSeek 网页版](https://chat.deepseek.com) 封装为 **Windows 桌面客户端**：官网对话、Agent 工作台、设置与 **API 管理（Chat2API UI）** 统一在同一应用内。推理默认走已登录网页会话的内嵌通道 `internal://desktop/v1`，配置与 [DeepSeek-TUI](third-party/DeepSeek-TUI) 的 `~/.deepseek/config.toml` 双向同步。
 
 > **免责声明：** 本仓库为第三方独立开源项目，与 DeepSeek 官方及任何独立 Chat2API 开源项目**无隶属、无授权、无背书关系**。Agent 引擎采用社区项目 [DeepSeek-TUI](third-party/DeepSeek-TUI)（submodule），亦非 DeepSeek 官方产品。详见 **[DISCLAIMER.md](./DISCLAIMER.md)**。
+
+**仓库简介（GitHub About）：** Windows 桌面版 DeepSeek — 嵌入官网聊天 + DeepSeek-TUI Agent + 汉化内嵌 API 管理台，桌面 / TUI / 网页会话一体化联动。
 
 ---
 
@@ -209,6 +215,17 @@ Agent 由 **DeepSeek-TUI** 子进程驱动（`deepseek serve --http`，默认 `:
 
 **Git 推送失败？**  
 可配置代理，例如：`git -c http.proxy=http://127.0.0.1:7890 push`。
+
+---
+
+## 更新日志（摘要）
+
+| 版本 | 要点 |
+|------|------|
+| **当前 main** | API 管理内嵌于 Agent 面板（无独立弹窗）；界面固定 **zh-CN**；移除 About / 语言切换；顶部 **桌面栈** 条（登录态、TUI、同步按钮）；`Chat2ApiEmbeddedConfigApplicator` 将 API 管理配置写回桌面并同步 TUI |
+| **v1.2.x** | 引入 `DeepSeek.Core`、内嵌 Chat2API UI、DeepSeek-TUI submodule 与集成元数据文件 |
+
+完整法律与合规说明见 [DISCLAIMER.md](./DISCLAIMER.md)。
 
 ---
 

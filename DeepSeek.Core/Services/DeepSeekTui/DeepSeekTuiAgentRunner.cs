@@ -28,7 +28,8 @@ public sealed class DeepSeekTuiAgentRunner
         Action<string>? onAnswerDelta,
         CancellationToken ct,
         Action<AgentUiActivity>? onActivity = null,
-        Action<string, bool>? onThinking = null)
+        Action<string, bool>? onThinking = null,
+        ulong eventSinceSeq = 0)
     {
         DeepSeekTuiConfigSync.Apply(config);
         await _host.EnsureRunningAsync(config, ct).ConfigureAwait(false);
@@ -52,23 +53,31 @@ public sealed class DeepSeekTuiAgentRunner
                 client, config, workspace, mode, model, autoApprove, allowShell, onLog, ct).ConfigureAwait(false)
             : existingThreadId;
 
+        AgentDebugLogger.Current?.Write("TUI", $"StartTurn thread={threadId} since_seq={eventSinceSeq}");
+        var startResult = await StartTurnWithRecoveryAsync(
+            client, threadId, config, workspace, mode, model, autoApprove, allowShell, prompt, onLog, ct)
+            .ConfigureAwait(false);
+        threadId = startResult.ThreadId;
+        var activeTurnId = startResult.ActiveTurnId;
+        AgentDebugLogger.Current?.Write("TUI", $"Turn started id={activeTurnId}");
+
         var answer = new StringBuilder();
+        var eventState = new TurnEventState();
         var turnDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var activeTurn = new ActiveTurnRef();
         var reportedTools = new HashSet<string>(StringComparer.Ordinal);
+        var maxEventSeq = eventSinceSeq;
         Exception? streamError = null;
         using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         using var interruptOnCancel = ct.Register(() =>
         {
-            var turnId = activeTurn.Id;
-            if (string.IsNullOrWhiteSpace(turnId))
+            if (string.IsNullOrWhiteSpace(activeTurnId))
                 return;
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await client.InterruptTurnAsync(threadId, turnId, CancellationToken.None).ConfigureAwait(false);
+                    await client.InterruptTurnAsync(threadId, activeTurnId, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -81,22 +90,24 @@ public sealed class DeepSeekTuiAgentRunner
         {
             try
             {
-                await foreach (var ev in client.StreamEventsAsync(threadId, 0, streamCts.Token).ConfigureAwait(false))
+                await foreach (var ev in client.StreamEventsAsync(threadId, eventSinceSeq, streamCts.Token)
+                                   .ConfigureAwait(false))
                 {
+                    var seq = DeepSeekTuiTurnEventFilter.GetEventSeq(ev.Payload, ev.Seq);
+                    if (seq > maxEventSeq)
+                        maxEventSeq = seq;
+
+                    if (!DeepSeekTuiTurnEventFilter.ShouldProcess(ev.Name, ev.Payload, activeTurnId, ev.TurnId))
+                        continue;
+
                     await HandleEventAsync(
-                            client, ev, workspace, answer, reportedTools, onLog, onAnswerDelta, onActivity, onThinking,
-                            turnDone, streamCts.Token)
+                            client, ev, workspace, answer, eventState, reportedTools, onLog, onAnswerDelta,
+                            onActivity, onThinking, activeTurnId, ev.TurnId,
+                            streamCts.Token)
                         .ConfigureAwait(false);
-                    if (ev.Name == "turn.completed")
-                    {
+
+                    if (DeepSeekTuiTurnEventFilter.IsTurnTerminal(ev.Name, ev.Payload, activeTurnId, ev.TurnId))
                         turnDone.TrySetResult();
-                    }
-                    else if (ev.Name == "turn.lifecycle")
-                    {
-                        var status = GetPayloadString(ev.Payload, "status");
-                        if (status is "completed" or "failed" or "interrupted" or "canceled")
-                            turnDone.TrySetResult();
-                    }
                 }
             }
             catch (OperationCanceledException) when (streamCts.IsCancellationRequested)
@@ -109,11 +120,6 @@ public sealed class DeepSeekTuiAgentRunner
                 turnDone.TrySetResult();
             }
         }, ct);
-
-        await Task.Delay(150, ct).ConfigureAwait(false);
-        AgentDebugLogger.Current?.Write("TUI", $"StartTurn thread={threadId}");
-        activeTurn.Id = await client.StartTurnAsync(threadId, prompt, ct).ConfigureAwait(false);
-        AgentDebugLogger.Current?.Write("TUI", $"Turn started id={activeTurn.Id}");
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromMinutes(30));
@@ -145,12 +151,75 @@ public sealed class DeepSeekTuiAgentRunner
         }
 
         var text = answer.ToString().Trim();
-        return new DeepSeekTuiRunResult(threadId, string.IsNullOrWhiteSpace(text) ? "任务已结束" : text);
+        if (string.IsNullOrWhiteSpace(text) && !string.IsNullOrWhiteSpace(eventState.TurnFailure))
+            text = eventState.TurnFailure.Trim();
+        return new DeepSeekTuiRunResult(
+            threadId,
+            string.IsNullOrWhiteSpace(text) ? "未能生成回复，请重试。" : text,
+            maxEventSeq);
     }
 
-    private sealed class ActiveTurnRef
+    private sealed record StartTurnResult(string ThreadId, string ActiveTurnId);
+
+    private async Task<StartTurnResult> StartTurnWithRecoveryAsync(
+        DeepSeekTuiRuntimeClient client,
+        string threadId,
+        AppConfig config,
+        string workspace,
+        string mode,
+        string model,
+        bool autoApprove,
+        bool allowShell,
+        string prompt,
+        Action<string> onLog,
+        CancellationToken ct)
     {
-        public string? Id;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                var activeTurnId = await client.StartTurnAsync(threadId, prompt, ct).ConfigureAwait(false);
+                return new StartTurnResult(threadId, activeTurnId);
+            }
+            catch (InvalidOperationException ex) when (DeepSeekTuiTurnEventFilter.IsActiveTurnConflict(ex))
+            {
+                if (attempt == 0)
+                {
+                    onLog("正在结束上一轮未完成回合…");
+                    if (await TryInterruptLatestTurnAsync(client, threadId, ct).ConfigureAwait(false))
+                    {
+                        await Task.Delay(500, ct).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    throw;
+                }
+
+                throw;
+            }
+        }
+
+        throw new InvalidOperationException("无法在当前 DeepSeek-TUI 线程上开始新回合。");
+    }
+
+    private static async Task<bool> TryInterruptLatestTurnAsync(
+        DeepSeekTuiRuntimeClient client,
+        string threadId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var thread = await client.GetThreadAsync(threadId, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(thread?.LatestTurnId))
+                return false;
+
+            await client.InterruptTurnAsync(threadId, thread.LatestTurnId, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task<string> CreateThreadWithAuthRetryAsync(
@@ -183,17 +252,24 @@ public sealed class DeepSeekTuiAgentRunner
         ex.Message.Contains("401", StringComparison.Ordinal) &&
         ex.Message.Contains("bearer", StringComparison.OrdinalIgnoreCase);
 
+    private sealed class TurnEventState
+    {
+        public string? TurnFailure { get; set; }
+    }
+
     private async Task HandleEventAsync(
         DeepSeekTuiRuntimeClient client,
         RuntimeSseEvent ev,
         string workspace,
         StringBuilder answer,
+        TurnEventState eventState,
         HashSet<string> reportedTools,
         Action<string> onLog,
         Action<string>? onAnswerDelta,
         Action<AgentUiActivity>? onActivity,
         Action<string, bool>? onThinking,
-        TaskCompletionSource turnDone,
+        string activeTurnId,
+        string? envelopeTurnId,
         CancellationToken ct)
     {
         var dbg = AgentDebugLogger.Current;
@@ -215,13 +291,13 @@ public sealed class DeepSeekTuiAgentRunner
                 if (string.IsNullOrEmpty(delta))
                     break;
 
-                if (kind is "reasoning" or "thinking")
+                if (DeepSeekTuiItemDeltaKind.IsReasoning(kind))
                 {
                     onThinking?.Invoke(delta, true);
                     break;
                 }
 
-                if (kind is null or "agent_message" or "message")
+                if (DeepSeekTuiItemDeltaKind.IsAnswer(kind))
                 {
                     if (delta.Length > 0 && answer.Length == 0)
                         dbg?.Write("TUI", "首条 answer delta 到达");
@@ -257,14 +333,40 @@ public sealed class DeepSeekTuiAgentRunner
                 break;
             }
             case "item.failed":
+            {
+                if (!DeepSeekTuiTurnEventFilter.ShouldProcess(ev.Name, ev.Payload, activeTurnId, envelopeTurnId))
+                    break;
+
+                var failKind = GetPayloadString(ev.Payload, "kind");
+                dbg?.LogSseEvent(
+                    ev.Name,
+                    failKind,
+                    GetPayloadString(ev.Payload, "status"));
+                var err = ResolveFailureMessage(ev.Payload);
+                dbg?.Write(
+                    "TUI-ERR",
+                    $"kind={failKind ?? "?"} answerLen={answer.Length} err={err ?? "(empty)"}");
+                if (!string.IsNullOrWhiteSpace(err))
+                {
+                    onLog("错误: " + err);
+                    eventState.TurnFailure = err;
+                    if (answer.Length == 0)
+                        onAnswerDelta?.Invoke(err);
+                }
+                else
+                {
+                    eventState.TurnFailure = "模型生成失败（无正文回复）";
+                }
+
+                break;
+            }
             case "turn.lifecycle":
             {
                 dbg?.LogSseEvent(
                     ev.Name,
                     GetPayloadString(ev.Payload, "status"),
                     GetPayloadString(ev.Payload, "phase"));
-                var err = GetPayloadString(ev.Payload, "error")
-                          ?? GetPayloadString(ev.Payload, "message");
+                var err = ResolveFailureMessage(ev.Payload);
                 if (!string.IsNullOrWhiteSpace(err))
                 {
                     dbg?.Write("TUI-ERR", err);
@@ -277,6 +379,15 @@ public sealed class DeepSeekTuiAgentRunner
                 dbg?.LogSseEvent(ev.Name, GetPayloadString(ev.Payload, "kind"));
                 break;
         }
+    }
+
+    private static string? ResolveFailureMessage(JsonElement payload)
+    {
+        var err = GetPayloadString(payload, "error")
+                  ?? GetPayloadString(payload, "message")
+                  ?? GetPayloadString(payload, "error_summary")
+                  ?? GetNestedString(payload, "error_message", "detail", "reason");
+        return string.IsNullOrWhiteSpace(err) ? null : err.Trim();
     }
 
     private static void TryEmitToolActivity(
@@ -462,4 +573,4 @@ public sealed class DeepSeekTuiAgentRunner
         s.Length <= max ? s : s[..max] + "…";
 }
 
-public sealed record DeepSeekTuiRunResult(string ThreadId, string Answer);
+public sealed record DeepSeekTuiRunResult(string ThreadId, string Answer, ulong LastEventSeq = 0);

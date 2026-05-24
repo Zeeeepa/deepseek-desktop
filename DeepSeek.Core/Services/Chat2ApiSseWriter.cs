@@ -25,6 +25,7 @@ public static class Chat2ApiSseWriter
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var sentRole = false;
         var sentContent = false;
+        var forTuiAgent = Chat2ApiFeatureScope.HasActiveAgentRun;
 
         await foreach (var ev in events.WithCancellation(ct))
         {
@@ -34,6 +35,12 @@ public static class Chat2ApiSseWriter
                     break;
 
                 case WebChatStreamDelta delta when delta.Kind == WebChatStreamDelta.Reasoning:
+                    if (forTuiAgent)
+                    {
+                        AgentStreamReasoningSink.Publish(delta.Text, append: true);
+                        break;
+                    }
+
                     if (!sentRole)
                     {
                         await WriteChunkAsync(output, id, created, model, new { role = "assistant" }, null, ct);
@@ -55,7 +62,8 @@ public static class Chat2ApiSseWriter
                     break;
 
                 case WebChatStreamDone done:
-                    await WriteFinalChunksAsync(output, id, created, model, done.Result, sentRole, sentContent, ct);
+                    await WriteFinalChunksAsync(
+                        output, id, created, model, done.Result, sentRole, sentContent, forTuiAgent, ct);
                     await WriteRawAsync(output, "data: [DONE]\n\n", ct);
                     return;
 
@@ -81,16 +89,30 @@ public static class Chat2ApiSseWriter
         WebChatResult result,
         bool sentRole,
         bool sentContent,
+        bool forTuiAgent,
         CancellationToken ct)
     {
         if (!sentRole)
             await WriteChunkAsync(output, id, created, model, new { role = "assistant" }, null, ct);
 
-        if (!sentContent && !string.IsNullOrEmpty(result.Content))
-            await WriteChunkAsync(output, id, created, model, new { content = result.Content }, null, ct);
+        if (!sentContent)
+        {
+            var content = ResolveOutboundContent(result, forTuiAgent);
+            if (!string.IsNullOrEmpty(content))
+                await WriteChunkAsync(output, id, created, model, new { content }, null, ct);
+        }
 
         if (result.ToolCalls is { Count: > 0 })
         {
+            if (forTuiAgent)
+            {
+                var fallback = ResolveOutboundContent(result, forTuiAgent);
+                if (!string.IsNullOrEmpty(fallback) && !sentContent)
+                    await WriteChunkAsync(output, id, created, model, new { content = fallback }, null, ct);
+                await WriteChunkAsync(output, id, created, model, new { }, "stop", ct);
+                return;
+            }
+
             var toolCalls = result.ToolCalls.Select(tc => new
             {
                 index = 0,
@@ -106,6 +128,18 @@ public static class Chat2ApiSseWriter
 
         var finish = result.FinishReason ?? "stop";
         await WriteChunkAsync(output, id, created, model, new { }, finish, ct);
+    }
+
+    private static string? ResolveOutboundContent(WebChatResult result, bool forTuiAgent)
+    {
+        var content = result.Content?.Trim();
+        if (!string.IsNullOrEmpty(content) && content != "(无回复)")
+            return content;
+
+        if (!forTuiAgent)
+            return string.IsNullOrEmpty(content) ? null : content;
+
+        return "未能生成回复，请重试。";
     }
 
     public static async Task WriteCompletionStreamAsync(

@@ -11,6 +11,7 @@ publish-wpf/
 # IDE
 .vs/
 .idea/
+.serena/
 *.user
 *.suo
 

@@ -514,7 +514,8 @@ public sealed class WinUiWebInjectService : IWebInjectBridge
             search,
             modelType = "expert",
             refFileIds = AgentRefFileIds,
-            chatSessionId = webChatSessionId
+            chatSessionId = webChatSessionId,
+            suppressToolCalls = Chat2ApiFeatureScope.HasActiveAgentRun
         });
         await InjectWebUserTokenOnUiAsync(webUserToken);
 

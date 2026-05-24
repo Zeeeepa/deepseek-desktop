@@ -57,9 +57,9 @@ public static class DeepSeekTuiConfigSync
         sb.AppendLine("[ui]");
         sb.AppendLine($"default_mode = \"{defaultMode}\"");
         sb.AppendLine($"approval_mode = \"{approval}\"");
-
-        var reasoningEffort = config.AgentDeepThinking ? "high" : "off";
-        sb.AppendLine($"reasoning_effort = \"{reasoningEffort}\"");
+        // 深度思考仅经 Chat2API → 网页 API；TUI reasoning_effort=high 会与网页思考叠加，
+        // 导致只产生 agent_reasoning 流而 agent_message item.failed。
+        sb.AppendLine("reasoning_effort = \"off\"");
 
         sb.AppendLine();
         sb.AppendLine("[features]");

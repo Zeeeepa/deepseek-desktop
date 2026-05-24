@@ -279,9 +279,16 @@ public sealed class LocalOpenAiServer : IDisposable
         var dbg = AgentDebugLogger.Current;
         var chatSw = Chat2ApiFeatureScope.HasActiveAgentRun ? System.Diagnostics.Stopwatch.StartNew() : null;
         var firstChunk = true;
-            dbg?.LogChat2ApiRequest(
+        var useThinking = req.Thinking;
+        if (Chat2ApiFeatureScope.HasActiveAgentRun && useThinking)
+        {
+            dbg?.Write("CHAT2API", "Agent/TUI 路径：关闭 thinking 以保证 content 流式输出");
+            useThinking = false;
+        }
+
+        dbg?.LogChat2ApiRequest(
             req.ResolvedModel,
-            req.Thinking,
+            useThinking,
             req.WebSearch,
             req.Messages.Count,
             stream: true);
@@ -292,7 +299,7 @@ public sealed class LocalOpenAiServer : IDisposable
             await foreach (var ev in _web.WebChatStreamAsync(
                                req.Messages,
                                req.ResolvedModel,
-                               req.Thinking,
+                               useThinking,
                                req.WebSearch,
                                CancellationToken.None,
                                _config.WebUserToken,
@@ -312,18 +319,20 @@ public sealed class LocalOpenAiServer : IDisposable
         finally
         {
             _web.AgentRefFileIds = prevRefIds;
-        }
-
-        if (chatSw is not null)
-        {
-            chatSw.Stop();
-            var chars = finalResult?.Content?.Length ?? 0;
-            var reasoning = finalResult?.ReasoningContent?.Length ?? 0;
-            dbg?.LogChat2ApiDone(
-                req.ResolvedModel,
-                chatSw.ElapsedMilliseconds,
-                chars + reasoning,
-                reasoning > 0 ? $"reasoningChars={reasoning}" : null);
+            if (chatSw is not null)
+            {
+                chatSw.Stop();
+                var chars = finalResult?.Content?.Length ?? 0;
+                var reasoning = finalResult?.ReasoningContent?.Length ?? 0;
+                var note = finalResult is null
+                    ? "stream ended without done"
+                    : (reasoning > 0 ? $"reasoningChars={reasoning}" : null);
+                dbg?.LogChat2ApiDone(
+                    req.ResolvedModel,
+                    chatSw.ElapsedMilliseconds,
+                    chars + reasoning,
+                    note);
+            }
         }
 
         if (finalResult is not null &&
@@ -350,9 +359,13 @@ public sealed class LocalOpenAiServer : IDisposable
 
         var dbg = AgentDebugLogger.Current;
         var chatSw = Chat2ApiFeatureScope.HasActiveAgentRun ? System.Diagnostics.Stopwatch.StartNew() : null;
+        var useThinking = req.Thinking;
+        if (Chat2ApiFeatureScope.HasActiveAgentRun && useThinking)
+            useThinking = false;
+
         dbg?.LogChat2ApiRequest(
             req.ResolvedModel,
-            req.Thinking,
+            useThinking,
             req.WebSearch,
             req.Messages.Count,
             stream: false);
@@ -363,7 +376,7 @@ public sealed class LocalOpenAiServer : IDisposable
             result = await _web.WebChatAsync(
                 req.Messages,
                 req.ResolvedModel,
-                req.Thinking,
+                useThinking,
                 req.WebSearch,
                 CancellationToken.None,
                 _config.WebUserToken,

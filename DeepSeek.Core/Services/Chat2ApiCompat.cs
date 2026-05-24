@@ -96,7 +96,7 @@ public static class Chat2ApiCompat
         var explicitSearch = ReadBool(root, "ds_search");
 
         var search = explicitWebSearch || explicitSearch;
-        var thinking = !string.IsNullOrWhiteSpace(explicitReasoningEffort) || explicitThinking;
+        var thinking = IsReasoningEffortEnabled(explicitReasoningEffort) || explicitThinking;
 
         ApplyAgentScopeDefaults(config, ref thinking, ref search, explicitReasoningEffort);
 
@@ -144,8 +144,30 @@ public static class Chat2ApiCompat
             search = webSearch;
 
         if (string.IsNullOrWhiteSpace(explicitReasoningEffort) && !thinking)
-            thinking = deepThink;
+        {
+            // TUI 经 HTTP 消费 OpenAI SSE：强制 thinking 会导致无 content delta → item.failed
+            if (!Chat2ApiFeatureScope.HasActiveAgentRun)
+                thinking = deepThink;
+        }
     }
+
+    /// <summary>reasoning_effort=off 不应视为开启思考（此前会误开 thinking 导致 TUI 失败）。</summary>
+    public static bool IsReasoningEffortEnabled(string? effort)
+    {
+        if (string.IsNullOrWhiteSpace(effort))
+            return false;
+
+        return !effort.Equals("off", StringComparison.OrdinalIgnoreCase)
+               && !effort.Equals("none", StringComparison.OrdinalIgnoreCase)
+               && !effort.Equals("disabled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static void ApplyAgentScopeDefaultsForTest(
+        AppConfig config,
+        ref bool thinking,
+        ref bool search,
+        string? explicitReasoningEffort) =>
+        ApplyAgentScopeDefaults(config, ref thinking, ref search, explicitReasoningEffort);
 
     public static string MapModel(string requestedModel, AppConfig config)
     {
