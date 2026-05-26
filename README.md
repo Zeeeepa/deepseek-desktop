@@ -1,8 +1,8 @@
-﻿# DeepSeek Desktop（deepseek_desktop）
+# DeepSeek Desktop（deepseek_desktop）
 
 本目录为 **WPF 主线** 的瘦身工作区：仅含可交付源码与资产，不含 Qt / WinUI / Bridge 实验代码。
 
-同级目录 `deepseek-edge` 为归档/实验仓，**已停止**向本目录同步。
+同级目录 `deepseek-edge` 为归档/实验仓（Qt、DdBridge 等），**已停止**向本目录同步。
 
 ## 目录约定
 
@@ -23,8 +23,10 @@
 ## 与 deepseek-edge 的关系
 
 - **只在本目录开发**：改 WPF、Agent、注入脚本后在此 `git commit`。
-- **不要**再运行 `scripts/sync-to-deepseek-desktop.ps1`（已停用）。
+- **不要**再运行 `scripts/sync-to-deepseek-desktop.ps1`（已停用；原 `robocopy /MIR` 会用较旧的 edge 覆盖本仓）。
 - **不要**把 `bin/`、`obj/`、`publish/` 提交进 Git。
+
+详见 [docs/MIGRATION.md](docs/MIGRATION.md)。
 
 ## 工程验收
 

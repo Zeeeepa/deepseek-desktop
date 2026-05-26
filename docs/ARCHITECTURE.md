@@ -45,5 +45,5 @@ flowchart TB
 
 ## 同步策略
 
-- 开发主仓：`deepseek_desktop`
-- 归档：`deepseek-edge` 仅单向 `scripts/sync-to-deepseek-desktop.ps1`，勿反向覆盖
+- 开发主仓：`deepseek_desktop`（唯一源码真相）
+- 归档：`deepseek-edge` 只读参考；**禁止**再运行 `sync-to-deepseek-desktop.ps1`（原 `robocopy /MIR` 会回滚 desktop）
