@@ -3,8 +3,7 @@ using System.Text.Json;
 namespace DeepSeekBrowser.Services;
 
 /// <summary>桌面双 Web 面（Chat + Agent）宿主抽象，供 WPF 复用。</summary>
-[Obsolete("Prefer IDesktopWebHost and focused interfaces (IDesktopWebSurfaces, IWebChatBridge, …).")]
-public interface IDdWebPages :
+public interface IDesktopWebHost :
     IDesktopWebSurfaces,
     IWorkModeBroadcast,
     IWebAuthBridge,
@@ -20,5 +19,6 @@ public interface IDdWebPages :
     WorkModeCoordinator WorkMode { get; }
 }
 
-/// <summary>Preferred name for <see cref="IDdWebPages"/>.</summary>
-public interface IDesktopWebHost : IDdWebPages;
+/// <summary>Legacy alias for <see cref="IDesktopWebHost"/>.</summary>
+[Obsolete("Prefer IDesktopWebHost and focused interfaces (IDesktopWebSurfaces, IWebChatBridge, …).")]
+public interface IDdWebPages : IDesktopWebHost;

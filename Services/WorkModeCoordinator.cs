@@ -7,12 +7,12 @@ namespace DeepSeekBrowser.Services;
 /// </summary>
 public sealed class WorkModeCoordinator
 {
-    private readonly IDdWebPages _webHost;
+    private readonly IDesktopWebHost _webHost;
     private string _mode = "chat";
     private int _revision;
     private CancellationTokenSource? _retryCts;
 
-    public WorkModeCoordinator(IDdWebPages webHost) => _webHost = webHost;
+    public WorkModeCoordinator(IDesktopWebHost webHost) => _webHost = webHost;
 
     public string Mode => _mode;
 

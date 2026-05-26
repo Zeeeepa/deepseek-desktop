@@ -1,4 +1,32 @@
-/* Agent 页布局 — 令牌见 ds-theme.css */
+/* Agent 页布局 — 令牌见 ds-theme.css（下方 :root 为加载失败时的回退，Qt WebEngine 必需） */
+:root {
+  --ds-blue: #4d6bfe;
+  --ds-blue-hover: #5c7aff;
+  --ds-blue-soft: #eef2ff;
+  --ds-bg: #ffffff;
+  --ds-page: #f9fafb;
+  --ds-sidebar: #f9fafb;
+  --ds-border: #e5e7eb;
+  --ds-border-light: #f3f4f6;
+  --ds-text: #374151;
+  --ds-title: #111827;
+  --ds-muted: #6b7280;
+  --ds-caption: #9ca3af;
+  --ds-user-bg: #4d6bfe;
+  --ds-assistant-bg: #f3f4f6;
+  --ds-radius-sm: 10px;
+  --ds-radius-md: 12px;
+  --ds-radius-lg: 16px;
+  --ds-radius-xl: 20px;
+  --ds-radius-pill: 9999px;
+  --ds-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --ds-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --ds-shadow-composer: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --ds-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --ds-content-width: 48rem;
+}
+
 *,
 *::before,
 *::after {
@@ -233,18 +261,22 @@ body {
   flex-shrink: 0;
 }
 
-/* —— 主区右上角：工作区 / 模式 / 模型 + 菜单 —— */
+/* —— 主区顶栏：左侧工作区/模式/模型，右侧菜单（对齐 WPF） —— */
 .ds-top-tray {
   position: absolute;
-  top: 10px;
-  right: 16px;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 6;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 2px;
-  max-width: min(92vw, 560px);
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 48px;
+  padding: 0 16px;
+  background: var(--ds-page, #f9fafb);
+  border-bottom: 1px solid var(--ds-border-light, #f3f4f6);
   pointer-events: none;
 }
 
@@ -252,9 +284,13 @@ body {
   pointer-events: auto;
 }
 
+.ds-ctx-chip-model {
+  margin-left: 0;
+}
+
 .ds-top-settings {
   flex-shrink: 0;
-  margin-left: 2px;
+  margin-left: auto;
 }
 
 .ds-sidebar-head-actions #btn-sidebar-settings {
@@ -891,11 +927,14 @@ body.ds-embedded-open .ds-composer-wrap {
   text-align: center;
 }
 
-.ds-composer-mode-float {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 10px);
-  z-index: 25;
+.ds-composer-mode-float,
+#mode-float.ds-composer-mode-float {
+  position: fixed !important;
+  right: 20px !important;
+  bottom: 24px !important;
+  top: auto !important;
+  left: auto !important;
+  z-index: 2147483647;
   margin: 0;
   pointer-events: auto;
 }
@@ -1673,6 +1712,43 @@ body.ds-embedded-open .ds-composer-wrap {
 .ds-send-btn svg {
   width: 16px;
   height: 16px;
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Qt WebEngine / Chromium：禁用系统原生表单样式，与 WebView2 输入框一致 */
+#chat-input,
+.ds-composer textarea,
+.ds-composer button,
+.ds-composer input,
+.ds-send-btn,
+.ds-tool-btn,
+.ds-mode-float {
+  -webkit-appearance: none;
+  appearance: none;
+  font-family: inherit;
+}
+
+#chat-input {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.ds-send-btn {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  padding: 0;
+  line-height: 0;
+}
+
+.ds-send-btn:disabled {
+  background: var(--ds-blue);
+}
+
+.ds-tool-btn {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  padding: 0;
 }
 
 /* —— Automations 介绍弹窗 —— */

@@ -83,14 +83,14 @@ button.ds-native-btn.ds-on .ds-native-icon {
 .ds-native-dot.ds-online { background: #22c55e !important; }
 .ds-native-dot.ds-offline { background: #9ca3af !important; }
 
-/* 输入区右下角：与 Agent 页 #mode-float 同款 */
+/* 整页视口右下角：与 Agent 页 #mode-float 同款 */
 #ds-agent-mode-float.ds-mode-float,
 #ds-agent-mode-float.ds-agent-mode-float,
 button.ds-agent-mode-float-btn {
   position: fixed !important;
   top: auto !important;
   left: auto !important;
-  bottom: 96px !important;
+  bottom: 24px !important;
   right: 20px !important;
   z-index: 2147483647 !important;
   display: inline-flex !important;
@@ -114,6 +114,12 @@ button.ds-agent-mode-float-btn {
   -webkit-backdrop-filter: blur(8px);
   pointer-events: auto !important;
   user-select: none !important;
+  transition: opacity 0.12s ease, transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+#ds-agent-mode-float.ds-agent-mode-float.ds-switching {
+  pointer-events: none !important;
+  opacity: 0.72 !important;
 }
 
 #ds-agent-mode-float.ds-agent-mode-float:hover {

@@ -1,4 +1,4 @@
-# deepseek_desktop — WPF 单入口构建（无 Qt / WinUI / Bridge）
+﻿# deepseek_desktop — WPF 单入口构建（无 Qt / WinUI / Bridge）
 param(
     [switch]$DeployToDesktop,
     [string]$DeployDir = "",
@@ -9,6 +9,27 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 . (Join-Path $root "scripts\Get-PublishDir.ps1")
 $out = Get-DeepSeekPublishDir -RepoRoot $root
+
+function Exit-BuildScript {
+    param([int]$Code = 0)
+    if ($Host.Name -eq "ConsoleHost" -and -not $env:CI -and -not $env:DEEPSEEK_BUILD_NO_PAUSE) {
+        if ($Code -ne 0) {
+            Write-Host ""
+            Write-Host "构建失败 (exit $Code)。按 Enter 关闭窗口..." -ForegroundColor Red
+        } else {
+            Write-Host ""
+            Write-Host "按 Enter 关闭窗口..."
+        }
+        Read-Host | Out-Null
+    }
+    exit $Code
+}
+
+trap {
+    Write-Host $_ -ForegroundColor Red
+    Write-Host $_.ScriptStackTrace -ForegroundColor DarkRed
+    Exit-BuildScript 1
+}
 
 if (Test-Path $out) {
     Get-Process -Name "DeepSeek" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -68,3 +89,5 @@ if ($DeployToDesktop -or $DeployDir) {
     Copy-Item -Path (Join-Path $out '*') -Destination $target -Recurse -Force
     Write-Host "Deployed: $target"
 }
+
+Exit-BuildScript 0

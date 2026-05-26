@@ -1,0 +1,113 @@
+/* Agent 底部输入区 — Qt WebEngine 与 WebView2 像素对齐补强 */
+
+.ds-composer-wrap {
+  padding: 0 24px 24px;
+}
+
+.ds-composer {
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.ds-composer:focus-within {
+  border-color: #4d6bfe;
+  box-shadow: 0 0 0 3px rgba(77, 107, 254, 0.1), 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+#chat-input {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  max-height: 200px;
+  padding: 14px 18px 6px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #111827;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#chat-input::placeholder {
+  color: #9ca3af;
+}
+
+.ds-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 10px 12px;
+}
+
+.ds-send-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: #4d6bfe;
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.ds-send-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: #4d6bfe;
+}
+
+.ds-send-btn:not(:disabled):hover {
+  background: #5c7aff;
+}
+
+.ds-tool-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.ds-tool-btn:hover {
+  background: #f9fafb;
+  color: #4d6bfe;
+}
+
+.ds-tool-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.ds-composer-mode-float,
+#mode-float.ds-composer-mode-float {
+  position: fixed !important;
+  right: 20px !important;
+  bottom: 24px !important;
+  top: auto !important;
+  left: auto !important;
+  z-index: 2147483647;
+}

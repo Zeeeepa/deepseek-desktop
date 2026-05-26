@@ -113,7 +113,9 @@
     ["Info", "信息"],
     ["Warn", "警告"],
     ["Original:", "原始："],
-    ["Masked:", "脱敏："]
+    ["Masked:", "脱敏："],
+    ["providers.loginFailed", "登录失败"],
+    ["providers.validateFailed", "验证失败"]
   ];
 
   REPLACEMENTS.sort(function (a, b) {
@@ -123,7 +125,10 @@
   var SKIP_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1 };
 
   function replaceText(value) {
-    if (!value || !/[A-Za-z]/.test(value)) return value;
+    if (!value) return value;
+    if (value === "providers.loginFailed") return "登录失败";
+    if (value === "providers.validateFailed") return "验证失败";
+    if (!/[A-Za-z]/.test(value)) return value;
     var next = value;
     for (var i = 0; i < REPLACEMENTS.length; i++) {
       var from = REPLACEMENTS[i][0];

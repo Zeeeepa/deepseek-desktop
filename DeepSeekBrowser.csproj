@@ -11,7 +11,7 @@
     <ApplicationTitle>DeepSeek</ApplicationTitle>
     <Product>DeepSeek Browser</Product>
     <Description>基于 Microsoft Edge (WebView2) 的 DeepSeek 专用浏览器</Description>
-    <Version>2.3.0</Version>
+    <Version>2.4.0</Version>
     <AssemblyName>DeepSeek</AssemblyName>
     <RootNamespace>DeepSeekBrowser</RootNamespace>
     <ApplicationIcon>Assets\deepseek.ico</ApplicationIcon>

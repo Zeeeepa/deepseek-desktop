@@ -1,0 +1,17 @@
+<Window x:Class="DeepSeekBrowser.Views.OAuthLoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        MinWidth="420" MinHeight="560"
+        Width="500" Height="720">
+  <Grid>
+    <wv2:WebView2 x:Name="OAuthWebView" />
+    <Border x:Name="LoadingOverlay" Background="#CCFFFFFF" Visibility="Visible">
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+        <TextBlock Text="正在打开登录页…" FontSize="14" Foreground="#333" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>

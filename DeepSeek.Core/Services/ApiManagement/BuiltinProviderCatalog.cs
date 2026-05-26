@@ -5,6 +5,13 @@ namespace DeepSeekBrowser.Services.ApiManagement;
 /// <summary>与 DSD API-main src/main/providers/builtin 对齐的内置供应商元数据（桌面端展示与添加向导）。</summary>
 public static class BuiltinProviderCatalog
 {
+    public sealed record CredField(
+        string Name,
+        string Label,
+        string Placeholder,
+        string? Help,
+        bool Required = true);
+
     public sealed record BuiltinMeta(
         string Id,
         string Name,
@@ -12,7 +19,11 @@ public static class BuiltinProviderCatalog
         string AuthType,
         string ApiEndpoint,
         string[] Models,
-        object[] CredentialFields);
+        CredField[] CredentialFields,
+        string? LoginUrl = null,
+        string? ModelsApiEndpoint = null,
+        IReadOnlyDictionary<string, string>? ModelsApiHeaders = null,
+        IReadOnlyDictionary<string, string>? DefaultModelMappings = null);
 
     public static IReadOnlyList<BuiltinMeta> All { get; } =
     [
@@ -21,12 +32,14 @@ public static class BuiltinProviderCatalog
             "userToken", "https://chat.deepseek.com/api",
             ["deepseek-v4-pro", "deepseek-v4-pro-think", "deepseek-v4-pro-search",
                 "deepseek-chat", "deepseek-reasoner", "DeepSeek-V3.2", "DeepSeek-R1", "DeepSeek-R1-Search"],
-            [Cred("token", "用户 Token", "从 DeepSeek 网页版获取", "浏览器开发者工具 Application → Local Storage → userToken")]),
+            [Cred("token", "用户 Token", "从 DeepSeek 网页版获取", "浏览器开发者工具 Application → Local Storage → userToken")],
+            LoginUrl: "https://chat.deepseek.com"),
         new("glm", "GLM",
             "智谱清言 AI 助手，支持 GLM-5 旗舰模型、深度思考和联网搜索",
             "refresh_token", "https://chatglm.cn/api",
             ["GLM-5", "GLM-5-Flash", "GLM-4-Plus", "GLM-4-Flash", "GLM-Zero-Preview", "GLM-DeepResearch"],
-            [Cred("refresh_token", "Refresh Token", "从浏览器 Local Storage 获取 chatglm_refresh_token", null)]),
+            [Cred("refresh_token", "Refresh Token", "从浏览器 Local Storage 获取 chatglm_refresh_token", null)],
+            LoginUrl: "https://chatglm.cn"),
         new("kimi", "Kimi",
             "Kimi AI 助手，支持长文本处理和联网搜索",
             "jwt", "https://www.kimi.com",
@@ -46,8 +59,29 @@ public static class BuiltinProviderCatalog
         new("qwen-ai", "Qwen AI",
             "Qwen AI 国际版",
             "cookie", "https://chat.qwen.ai",
-            ["qwen-max", "qwen-plus"],
-            [Cred("cookie", "Cookie", "从 chat.qwen.ai 获取", null)]),
+            [
+                "Qwen3.6-Plus", "Qwen3.5-Plus", "Qwen3.5-Omni-Plus", "Qwen3.5-Flash",
+                "Qwen3.5-Max-Preview", "Qwen3.6-Plus-Preview", "Qwen3-Max", "Qwen2.5-Max"
+            ],
+            [Cred("token", "Auth Token", "从 chat.qwen.ai Local Storage 获取 token", null),
+                Cred("cookies", "Cookies (可选)", "浏览器 Cookie 字符串", null, required: false)],
+            LoginUrl: "https://chat.qwen.ai",
+            ModelsApiEndpoint: "https://chat.qwen.ai/api/models",
+            ModelsApiHeaders: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Accept"] = "application/json, text/plain, */*",
+                ["Referer"] = "https://chat.qwen.ai/",
+                ["source"] = "web",
+                ["Version"] = "0.2.35"
+            },
+            DefaultModelMappings: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Qwen3.6-Plus"] = "qwen3.6-plus",
+                ["Qwen3.5-Plus"] = "qwen3.5-plus",
+                ["Qwen3.5-Flash"] = "qwen3.5-flash",
+                ["Qwen3-Max"] = "qwen3-max-2026-01-23",
+                ["Qwen2.5-Max"] = "qwen-max-latest"
+            }),
         new("perplexity", "Perplexity",
             "Perplexity AI 搜索助手，支持多模型和联网搜索增强",
             "cookie", "https://www.perplexity.ai",
@@ -86,21 +120,26 @@ public static class BuiltinProviderCatalog
                 enabled = true,
                 description = p.DescriptionZh,
                 supportedModels = models,
-                credentialFields = p.CredentialFields,
+                credentialFields = p.CredentialFields.Select(ToUiCred).ToArray(),
                 tokenCheckEndpoint = "",
-                tokenCheckMethod = "GET"
+                tokenCheckMethod = "GET",
+                modelsApiEndpoint = p.ModelsApiEndpoint ?? "",
+                loginUrl = p.LoginUrl ?? p.ApiEndpoint
             };
         }).Cast<object>().ToArray();
     }
 
-    private static object Cred(string name, string label, string placeholder, string? help, bool required = true) =>
+    private static CredField Cred(string name, string label, string placeholder, string? help, bool required = true) =>
+        new(name, label, placeholder, help, required);
+
+    private static object ToUiCred(CredField field) =>
         new
         {
-            name,
-            label,
+            name = field.Name,
+            label = field.Label,
             type = "password",
-            required,
-            placeholder,
-            helpText = help ?? ""
+            required = field.Required,
+            placeholder = field.Placeholder,
+            helpText = field.Help ?? ""
         };
 }

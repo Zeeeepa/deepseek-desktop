@@ -9,6 +9,18 @@
   var listeners = [];
   var lastToggleAt = 0;
   var switchInFlight = false;
+  var switchInFlightTimer = null;
+
+  function armSwitchTimeout() {
+    if (switchInFlightTimer) clearTimeout(switchInFlightTimer);
+    switchInFlightTimer = setTimeout(function () {
+      switchInFlightTimer = null;
+      if (!switchInFlight) return;
+      switchInFlight = false;
+      notify();
+      post("requestWorkModeState", {});
+    }, 4000);
+  }
 
   function syncFloaterSwitchingClass() {
     var switching = !!switchInFlight;
@@ -51,6 +63,10 @@
     if (next.revision > 0) lastRevision = next.revision;
     state = next;
     switchInFlight = false;
+    if (switchInFlightTimer) {
+      clearTimeout(switchInFlightTimer);
+      switchInFlightTimer = null;
+    }
     notify();
   }
 
@@ -69,6 +85,7 @@
       revision: lastRevision,
     };
     switchInFlight = true;
+    armSwitchTimeout();
     notify();
   }
 
@@ -141,7 +158,8 @@
           extra.webChatSessionId = window.__dsAgentWebChatSessionId;
       } catch (_) {}
     }
-    post("toggleWorkMode", extra);
+    // 使用 setWorkMode 携带目标 mode，避免与原生 isAgentVisible 不同步时 toggle 反向。
+    post("setWorkMode", Object.assign({ mode: state.mode }, extra));
   }
 
   function findFloaterTarget(target) {
@@ -218,8 +236,8 @@
       if (switchInFlight) return;
       lastToggleAt = Date.now();
       optimisticToggle();
-      var body = Object.assign({ skipNavigate: true }, extra || {});
-      post("toggleWorkMode", body);
+      var body = Object.assign({ mode: state.mode, skipNavigate: true }, extra || {});
+      post("setWorkMode", body);
     },
     requestSet: function (mode, extra) {
       post("setWorkMode", Object.assign({ mode: mode }, extra || {}));

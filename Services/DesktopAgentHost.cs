@@ -20,7 +20,7 @@ namespace DeepSeekBrowser.Services;
 public sealed partial class DesktopAgentHost : IAsyncDisposable
 {
     private readonly McpHub _mcpHub = new();
-    private readonly IDdWebPages _pages;
+    private readonly IDesktopWebHost _pages;
 
     private WebInjectService ChatWebInject => (WebInjectService)_pages.Chat;
     private readonly LocalOpenAiServer _localApi;
@@ -74,7 +74,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     private string ResolveChatNavigationUrl() =>
         AppNavigation.ChatSessionUrl(_lastAgentWebChatSessionId);
 
-    public DesktopAgentHost(IDdWebPages pages, LocalOpenAiServer localApi)
+    public DesktopAgentHost(IDesktopWebHost pages, LocalOpenAiServer localApi)
     {
         _pages = pages;
         _localApi = localApi;
@@ -1485,7 +1485,30 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     }
 
     private DsdApiIpcBridge GetDsdApiIpc() =>
-        _dsdApiIpc ??= new DsdApiIpcBridge(_localApi, ResolveDsdApiWebInject(), () => _owner, SyncDsdApiStackAsync);
+        _dsdApiIpc ??= new DsdApiIpcBridge(
+            _localApi,
+            ResolveDsdApiWebInject(),
+            () => _owner,
+            SyncDsdApiStackAsync,
+            EmitDsdApiIpcEvent);
+
+    private void EmitDsdApiIpcEvent(string channel, object?[] args) =>
+        _ = DispatchDsdApiIpcEventAsync(channel, args);
+
+    private async Task DispatchDsdApiIpcEventAsync(string channel, object?[] args)
+    {
+        var payload = new { type = "ipcEvent", channel, args };
+        try
+        {
+            if (AppNavigation.IsEmbeddedApiManagementPage(_pages.AgentSource))
+                await _pages.Agent.PostWebMessageAsync(payload).ConfigureAwait(false);
+            await _pages.Agent.PostToPageAsync(payload).ConfigureAwait(false);
+        }
+        catch
+        {
+            // page may not be ready
+        }
+    }
 
     private WebInjectService ResolveDsdApiWebInject() => (WebInjectService)_pages.Agent;
 

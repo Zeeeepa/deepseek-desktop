@@ -4,7 +4,7 @@ public static class AppNavigation
 {
     public const string DeepSeekUrl = "https://chat.deepseek.com/";
     /// <summary>内嵌 Agent / API 管理 UI 构建号；每次改 UI 资源后递增，启动时自动清 WebView 缓存。</summary>
-    public const int EmbeddedUiBuild = 32;
+    public const int EmbeddedUiBuild = 35;
 
     public static string ChatSessionUrl(string? sessionId)
     {

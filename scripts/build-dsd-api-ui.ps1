@@ -51,6 +51,7 @@ Copy-Item -Force (Join-Path $uiSrc "ds-rebrand.js") (Join-Path $DestDir "ds-rebr
 Copy-Item -Force (Join-Path $uiSrc "ds-ready.js") (Join-Path $DestDir "ds-ready.js")
 Copy-Item -Force (Join-Path $uiSrc "ds-ui-trim.js") (Join-Path $DestDir "ds-ui-trim.js")
 Copy-Item -Force (Join-Path $uiSrc "ds-api-management.js") (Join-Path $DestDir "ds-api-management.js")
+Copy-Item -Force (Join-Path $uiSrc "ds-oauth-embedded.js") (Join-Path $DestDir "ds-oauth-embedded.js")
 Copy-Item -Force (Join-Path $uiSrc "ds-i18n-zh.js") (Join-Path $DestDir "ds-i18n-zh.js")
 Copy-Item -Force (Join-Path $uiSrc "ds-desktop-stack.js") (Join-Path $DestDir "ds-desktop-stack.js")
 Copy-Item -Force (Join-Path $uiSrc "ds-boot-guard.js") (Join-Path $DestDir "ds-boot-guard.js")
@@ -100,6 +101,7 @@ function Repair-DsdApiIndexHtml {
   <script src="./ds-i18n-zh.js"></script>
   <script src="./ds-ui-trim.js"></script>
   <script src="./ds-api-management.js"></script>
+  <script src="./ds-oauth-embedded.js"></script>
   <script src="./ds-ready.js"></script>
   <script src="./ds-rebrand.js"></script>
   <script src="./ds-desktop-stack.js"></script>
@@ -259,8 +261,30 @@ function Apply-DsdApiChineseLocale {
         $settings = $settings.Replace('t("settings.managementApi.title")', '"负载均衡"')
         $settings = $settings.Replace('value: "managementApi"', 'value: "loadbalance"')
         $settings = $settings -replace 'TabsContent, \{ value: "managementApi"', 'TabsContent, { value: "loadbalance"'
-        $settings = $settings -replace 'ManagementApiSettings, \{\}\)', 'function LoadBalanceMount(){return /* @__PURE__ */ jsxRuntimeExports.jsx("div",{id:"ds-loadbalance-root",className:"space-y-4"})} LoadBalanceMount(),{})'
+        if ($settings -notmatch 'function LoadBalanceMount\(') {
+            $settings = $settings.Replace(
+                "function Settings() {",
+                "function LoadBalanceMount() {`r`n  return /* @__PURE__ */ jsxRuntimeExports.jsx(`"div`", { id: `"ds-loadbalance-root`", className: `"space-y-4`" });`r`n}`r`nfunction Settings() {"
+            )
+        }
+        $settings = $settings -replace 'ManagementApiSettings, \{\}\)', 'LoadBalanceMount, {})'
         [System.IO.File]::WriteAllText($settingsJs.FullName, $settings, [System.Text.UTF8Encoding]::new($false))
+    }
+}
+
+function Patch-DsdApiProvidersLoginFailed {
+    param([string]$AssetsDir)
+    $indexJs = Get-DsdApiMainBundle -AssetsDir $AssetsDir
+    if (-not $indexJs) { return }
+    $content = [System.IO.File]::ReadAllText($indexJs.FullName, [System.Text.UTF8Encoding]::new($false))
+    $orig = $content
+    if ($content -notmatch 'providers\$1\s*=\s*\{[^}]*loginFailed:') {
+        $content = $content -replace '(loginWindowAlreadyOpen:\s*"登录窗口已打开",\s*\r?\n)(\s*loggingIn:)', "`$1  loginFailed: `"登录失败`",`n`$2"
+        $content = $content -replace '(loginWindowAlreadyOpen:\s*"A login window is already open",\s*\r?\n)(\s*loggingIn:)', "`$1  loginFailed: `"Login failed`",`n`$2"
+    }
+    if ($content -ne $orig) {
+        [System.IO.File]::WriteAllText($indexJs.FullName, $content, [System.Text.UTF8Encoding]::new($false))
+        Write-Host "  OK providers.loginFailed patched in $($indexJs.Name)"
     }
 }
 
@@ -325,6 +349,7 @@ Remove-DsdApiTrayAndNotificationSettings -AssetsDir $DestDir
 Remove-DsdApiLanguageSettings -AssetsDir $DestDir
 Fix-DsdApiThemeProvider -AssetsDir $DestDir
 Apply-DsdApiChineseLocale -AssetsDir $DestDir
+Patch-DsdApiProvidersLoginFailed -AssetsDir $DestDir
 Enable-DsdApiCustomProviderTab -AssetsDir $DestDir
 Apply-DsdDesktopBundleBranding -AssetsDir $DestDir
 
@@ -336,10 +361,18 @@ if ($brandingHits) {
 & (Join-Path (Split-Path $PSScriptRoot -Parent) "scripts\sync-agent-dsd-api.ps1") -Root (Split-Path $PSScriptRoot -Parent)
 
 $mainBundle = Get-DsdApiMainBundle -AssetsDir $DestDir
-if ($mainBundle -and (Get-Command node -ErrorAction SilentlyContinue)) {
-    & node --check $mainBundle.FullName
-    if ($LASTEXITCODE -ne 0) { throw "DSD API bundle syntax check failed: $($mainBundle.Name)" }
-    Write-Host "  OK DSD API bundle syntax ($($mainBundle.Name))"
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    if ($mainBundle) {
+        & node --check $mainBundle.FullName
+        if ($LASTEXITCODE -ne 0) { throw "DSD API bundle syntax check failed: $($mainBundle.Name)" }
+        Write-Host "  OK DSD API bundle syntax ($($mainBundle.Name))"
+    }
+    $settingsBundle = Get-ChildItem (Join-Path $DestDir "assets") -Filter "Settings-*.js" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($settingsBundle) {
+        & node --check $settingsBundle.FullName
+        if ($LASTEXITCODE -ne 0) { throw "DSD API bundle syntax check failed: $($settingsBundle.Name)" }
+        Write-Host "  OK DSD API bundle syntax ($($settingsBundle.Name))"
+    }
 }
 
 Write-Host "DSD API UI copied to $DestDir"

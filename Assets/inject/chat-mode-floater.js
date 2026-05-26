@@ -34,27 +34,15 @@
       );
     }
 
-    function measureFloaterAnchor() {
-      var input = findChatInput();
-      var bottom = 96;
-      var right = 20;
-      if (input) {
-        var r = input.getBoundingClientRect();
-        if (r.height > 0 && r.width > 0) {
-          bottom = Math.max(72, window.innerHeight - r.top + 12);
-          right = Math.max(16, window.innerWidth - r.right);
-        }
-      }
-      return { bottom: bottom, right: right };
-    }
+    /** 与 Agent 页 #mode-float 一致：整页视口右下角 */
+    var VIEWPORT_FLOAT = { bottom: 24, right: 20 };
 
     function pinFloater(btn) {
       if (!btn) return;
-      var anchor = measureFloaterAnchor();
       btn.style.setProperty("position", "fixed", "important");
       btn.style.setProperty("top", "auto", "important");
-      btn.style.setProperty("bottom", anchor.bottom + "px", "important");
-      btn.style.setProperty("right", anchor.right + "px", "important");
+      btn.style.setProperty("bottom", VIEWPORT_FLOAT.bottom + "px", "important");
+      btn.style.setProperty("right", VIEWPORT_FLOAT.right + "px", "important");
       btn.style.setProperty("left", "auto", "important");
       btn.style.setProperty("min-width", "88px", "important");
       btn.style.setProperty("height", "34px", "important");
@@ -68,15 +56,19 @@
       s.textContent =
         "#ds-desktop-overlay-root{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important}" +
         "#ds-agent-mode-float.ds-chat-mode-floater{position:fixed!important;top:auto!important;left:auto!important;" +
-        "z-index:2147483647!important;pointer-events:auto!important;display:inline-flex!important;align-items:center!important;" +
-        "justify-content:center!important;gap:6px!important;height:34px!important;min-width:88px!important;padding:0 14px!important;border-radius:9999px!important;" +
-        "border:1px solid #e5e7eb!important;background:rgba(255,255,255,.97)!important;color:#374151!important;" +
+        "bottom:24px!important;right:20px!important;z-index:2147483647!important;pointer-events:auto!important;" +
+        "display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;" +
+        "height:34px!important;min-width:88px!important;padding:0 14px!important;border-radius:9999px!important;" +
+        "border:1px solid #e5e7eb!important;background:rgba(255,255,255,.96)!important;color:#374151!important;" +
         "font-size:13px!important;line-height:1!important;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif!important;" +
-        "cursor:pointer!important;box-shadow:0 4px 16px rgba(0,0,0,.06)!important;visibility:visible!important;opacity:1!important;" +
+        "cursor:pointer!important;box-shadow:0 4px 16px rgba(0,0,0,.06)!important;backdrop-filter:blur(8px)!important;" +
+        "-webkit-backdrop-filter:blur(8px)!important;visibility:visible!important;opacity:1!important;" +
         "transition:opacity .12s ease,transform .12s ease,border-color .12s ease,background .12s ease!important;" +
-        "#ds-agent-mode-float.ds-switching{pointer-events:none!important;opacity:.72!important}" +
         "box-sizing:border-box!important;-webkit-app-region:no-drag!important}" +
+        "#ds-agent-mode-float.ds-chat-mode-floater:hover{background:#f9fafb!important;border-color:#d1d5db!important}" +
+        "#ds-agent-mode-float.ds-switching{pointer-events:none!important;opacity:.72!important}" +
         "#ds-agent-mode-float.ds-chat-mode-floater.ds-on{border-color:#4d6bfe!important;color:#4d6bfe!important;background:#eef2ff!important}" +
+        "#ds-agent-mode-float.ds-chat-mode-floater.ds-on:hover{background:#eef2ff!important;border-color:#4d6bfe!important}" +
         "#ds-agent-mode-float .ds-mode-float-icon{display:inline-flex!important;align-items:center!important;width:16px!important;height:16px!important;color:#6b7280!important}" +
         "#ds-agent-mode-float.ds-on .ds-mode-float-icon{color:#4d6bfe!important}" +
         "#ds-agent-mode-float-label{min-width:42px!important;text-align:center!important;display:inline-flex!important;justify-content:center!important}";
@@ -120,7 +112,7 @@
         btn = document.createElement("button");
         btn.type = "button";
         btn.id = "ds-agent-mode-float";
-        btn.className = "ds-mode-float ds-chat-mode-floater";
+        btn.className = "ds-mode-float ds-agent-mode-float ds-chat-mode-floater";
         btn.setAttribute("data-ds-workmode-floater", "1");
         btn.setAttribute("data-ds-floater", "1");
         btn.innerHTML =
@@ -166,10 +158,6 @@
         var btn = document.getElementById("ds-agent-mode-float");
         if (btn) pinFloater(btn);
       });
-      setInterval(function () {
-        var btn = document.getElementById("ds-agent-mode-float");
-        if (btn) pinFloater(btn);
-      }, 500);
     }
 
     window.__dsChatModeFloaterBoot = function boot() {

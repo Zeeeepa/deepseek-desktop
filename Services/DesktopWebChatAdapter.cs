@@ -3,9 +3,9 @@ using DeepSeekBrowser.Services.Harness;
 namespace DeepSeekBrowser.Services;
 public sealed class DesktopWebChatAdapter : IAgentWebChat
 {
-    private readonly IDdWebPages _host;
+    private readonly IDesktopWebHost _host;
 
-    public DesktopWebChatAdapter(IDdWebPages host) => _host = host;
+    public DesktopWebChatAdapter(IDesktopWebHost host) => _host = host;
 
     public Task<WebChatResult> CompleteAsync(
         IReadOnlyList<ChatMessage> messages,

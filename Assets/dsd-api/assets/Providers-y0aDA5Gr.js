@@ -5129,15 +5129,30 @@ function Providers() {
   const handleCheckAllStatus = async () => {
     setIsRefreshing(true);
     try {
-      const statuses = await window.electronAPI.providers.checkAllStatus();
+      const [statuses, providersData, accountsData] = await Promise.all([
+        window.electronAPI.providers.checkAllStatus(),
+        window.electronAPI.providers.getAll(),
+        window.electronAPI.accounts.getAll()
+      ]);
       const newStatusMap = {};
       for (const [id, result] of Object.entries(statuses)) {
         newStatusMap[id] = result.status;
       }
+      useProvidersStore.getState().setProviders(providersData);
+      useProvidersStore.getState().setAccounts(accountsData);
+      const countMap = {};
+      for (const provider of providersData) {
+        const providerAccounts2 = accountsData.filter((a) => a.providerId === provider.id);
+        countMap[provider.id] = {
+          total: providerAccounts2.length,
+          active: providerAccounts2.filter((a) => a.status === "active").length
+        };
+      }
       store.setProviderStatuses(newStatusMap);
+      store.setAccountCounts(countMap);
       toast({
         title: t("providers.statusRefreshed"),
-        description: `${t("providers.onlineCount")}: ${Object.values(newStatusMap).filter((s) => s === "online").length} / ${store.providers.length}`
+        description: `${t("providers.onlineCount")}: ${Object.values(newStatusMap).filter((s) => s === "online").length} / ${providersData.length}`
       });
     } catch (error) {
       toast({

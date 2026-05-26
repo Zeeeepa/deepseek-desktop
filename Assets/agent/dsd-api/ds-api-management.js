@@ -11,6 +11,8 @@
           "translation",
           {
             providers: {
+              loginFailed: "登录失败",
+              validateFailed: "验证失败",
               customProviders: "自定义供应商",
               customProviderNotSupported: "",
               createCustomProvider: "添加 OpenAI 兼容供应商",

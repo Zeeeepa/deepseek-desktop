@@ -46,8 +46,38 @@ public static class ProviderAccountStore
         File.WriteAllText(FilePath, JsonSerializer.Serialize(accounts, JsonOptions));
     }
 
-    public static ProviderAccountRecord Add(string providerId, string name, Dictionary<string, string> credentials)
+    public static ProviderAccountRecord Add(
+        string providerId,
+        string name,
+        Dictionary<string, string> credentials,
+        string? email = null,
+        int? dailyLimit = null) =>
+        AddOrUpdate(providerId, name, credentials, email, dailyLimit);
+
+    public static ProviderAccountRecord AddOrUpdate(
+        string providerId,
+        string name,
+        Dictionary<string, string> credentials,
+        string? email = null,
+        int? dailyLimit = null)
     {
+        var existing = AccountCredentialIdentity.FindExisting(providerId, credentials);
+        if (existing is not null)
+        {
+            var updated = Update(existing.Id, rec =>
+            {
+                if (!string.IsNullOrWhiteSpace(name))
+                    rec.Name = name;
+                if (!string.IsNullOrWhiteSpace(email))
+                    rec.Email = email;
+                if (dailyLimit.HasValue)
+                    rec.DailyLimit = dailyLimit;
+                MergeCredentials(rec.Credentials, credentials);
+                rec.Status = rec.Credentials.Values.Any(IsActiveCredential) ? "active" : rec.Status;
+            });
+            return updated ?? existing;
+        }
+
         var list = Load();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var rec = new ProviderAccountRecord
@@ -55,13 +85,45 @@ public static class ProviderAccountStore
             Id = "acc-" + Guid.NewGuid().ToString("N")[..10],
             ProviderId = providerId,
             Name = name,
-            Credentials = credentials,
-            Status = credentials.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ? "active" : "inactive",
+            Email = email ?? "",
+            Credentials = new Dictionary<string, string>(credentials, StringComparer.OrdinalIgnoreCase),
+            Status = credentials.Values.Any(IsActiveCredential) ? "active" : "inactive",
             CreatedAt = now,
             UpdatedAt = now,
-            LastUsed = now
+            LastUsed = now,
+            DailyLimit = dailyLimit
         };
         list.Add(rec);
+        Save(list);
+        return rec;
+    }
+
+    private static void MergeCredentials(
+        Dictionary<string, string> target,
+        IReadOnlyDictionary<string, string> incoming)
+    {
+        foreach (var kv in incoming)
+        {
+            if (!IsActiveCredential(kv.Value))
+                continue;
+            target[kv.Key] = kv.Value.Trim();
+        }
+    }
+
+    private static bool IsActiveCredential(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && !value.StartsWith("••••", StringComparison.Ordinal);
+
+    public static ProviderAccountRecord? Update(string accountId, Action<ProviderAccountRecord> mutate)
+    {
+        if (string.IsNullOrWhiteSpace(accountId))
+            return null;
+        var list = Load();
+        var rec = list.FirstOrDefault(a => string.Equals(a.Id, accountId, StringComparison.OrdinalIgnoreCase));
+        if (rec is null)
+            return null;
+
+        mutate(rec);
+        rec.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Save(list);
         return rec;
     }

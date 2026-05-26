@@ -176,7 +176,7 @@
       const style = document.createElement("style");
       style.id = "ds-native-style-fallback";
       style.textContent =
-        "#ds-toast-wrap{position:fixed!important;right:20px!important;bottom:24px!important;left:auto!important;top:auto!important;z-index:2147483647!important;max-width:360px!important;pointer-events:none!important}#ds-provider-mask{position:fixed!important;inset:0!important;z-index:2147483646!important;display:flex!important;align-items:center!important;justify-content:center!important;background:rgba(0,0,0,.4)!important}.ds-mode-menu-portal{position:fixed!important;z-index:2147483647!important;pointer-events:auto!important}#ds-desktop-overlay-root{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important}#ds-settings-top{position:fixed!important;top:10px!important;right:16px!important;left:auto!important;bottom:auto!important;z-index:2147483647!important;width:34px!important;height:34px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;border-radius:8px!important;border:1px solid #e5e7eb!important;background:rgba(255,255,255,.97)!important;color:#374151!important;cursor:pointer!important;pointer-events:auto!important;box-shadow:0 4px 16px rgba(0,0,0,.06)!important}#ds-agent-mode-float.ds-mode-float,#ds-agent-mode-float.ds-agent-mode-float,.ds-agent-mode-float-btn{position:fixed!important;top:auto!important;left:auto!important;bottom:96px!important;right:20px!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;height:34px!important;min-width:88px!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important}.ds-mode-wrap{margin:0!important;padding:0!important}";
+        "#ds-toast-wrap{position:fixed!important;right:20px!important;bottom:72px!important;left:auto!important;top:auto!important;z-index:2147483646!important;max-width:360px!important;pointer-events:none!important}#ds-provider-mask{position:fixed!important;inset:0!important;z-index:2147483646!important;display:flex!important;align-items:center!important;justify-content:center!important;background:rgba(0,0,0,.4)!important}.ds-mode-menu-portal{position:fixed!important;z-index:2147483647!important;pointer-events:auto!important}#ds-desktop-overlay-root{position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important}#ds-settings-top{position:fixed!important;top:10px!important;right:16px!important;left:auto!important;bottom:auto!important;z-index:2147483647!important;width:34px!important;height:34px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;border-radius:8px!important;border:1px solid #e5e7eb!important;background:rgba(255,255,255,.97)!important;color:#374151!important;cursor:pointer!important;pointer-events:auto!important;box-shadow:0 4px 16px rgba(0,0,0,.06)!important}#ds-agent-mode-float.ds-mode-float,#ds-agent-mode-float.ds-agent-mode-float,.ds-agent-mode-float-btn{position:fixed!important;top:auto!important;left:auto!important;bottom:24px!important;right:20px!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;height:34px!important;min-width:88px!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;transition:opacity .12s ease,transform .12s ease,border-color .12s ease,background .12s ease!important}.ds-mode-wrap{margin:0!important;padding:0!important}";
       appendToHead(style);
     }
   }
@@ -217,28 +217,15 @@
     pinModeFloaterStyles(btn);
   }
 
-  function measureComposerFloaterAnchor() {
-    const input = findInput();
-    let bottom = 96;
-    let right = 20;
-    if (input) {
-      const r = input.getBoundingClientRect();
-      if (r.height > 0 && r.width > 0) {
-        bottom = Math.max(72, window.innerHeight - r.top + 12);
-        right = Math.max(16, window.innerWidth - r.right);
-      }
-    }
-    return { bottom, right };
-  }
+  const VIEWPORT_MODE_FLOAT = { bottom: 24, right: 20 };
 
-  /** 输入框右下角：与 Agent 页 #mode-float 对齐 */
+  /** 整页视口右下角，与 Agent 页 #mode-float 对齐 */
   function pinComposerModeFloater(btn) {
     if (!btn) return;
-    const { bottom, right } = measureComposerFloaterAnchor();
     btn.style.setProperty("position", "fixed", "important");
     btn.style.setProperty("top", "auto", "important");
-    btn.style.setProperty("bottom", bottom + "px", "important");
-    btn.style.setProperty("right", right + "px", "important");
+    btn.style.setProperty("bottom", VIEWPORT_MODE_FLOAT.bottom + "px", "important");
+    btn.style.setProperty("right", VIEWPORT_MODE_FLOAT.right + "px", "important");
     btn.style.setProperty("left", "auto", "important");
     btn.style.setProperty("z-index", "2147483647", "important");
     btn.style.setProperty("display", "inline-flex", "important");
@@ -276,7 +263,6 @@
     if (window.__dsModeFloaterReposBound) return;
     window.__dsModeFloaterReposBound = true;
     window.addEventListener("resize", repositionModeFloater);
-    setInterval(repositionModeFloater, 500);
   }
 
   const TOP_SETTINGS_ICON =
@@ -1344,7 +1330,7 @@
       hint = document.createElement("div");
       hint.id = "ds-agent-mode-hint";
       hint.style.cssText =
-        "position:fixed;left:50%;transform:translateX(-50%);bottom:108px;z-index:2147483644;padding:6px 14px;background:#eef2ff;border:1px solid #4d6bfe;border-radius:9999px;font-size:12px;color:#4d6bfe;pointer-events:none;white-space:nowrap";
+        "position:fixed;left:50%;transform:translateX(-50%);bottom:68px;z-index:2147483644;padding:6px 14px;background:#eef2ff;border:1px solid #4d6bfe;border-radius:9999px;font-size:12px;color:#4d6bfe;pointer-events:none;white-space:nowrap";
       appendToBody(hint);
     }
     hint.textContent = isAgentLikeMode()
@@ -1515,7 +1501,10 @@
         const text = elText(el);
         if (!text.includes("快速") && !text.includes("专家") && !text.includes("识图")) return;
         closeModeMenus();
-        setTimeout(() => scheduleBurstInject(true), 120);
+        // 官网原生「快速/专家/识图」切换时不要 hard-reset 注入，否则会干扰 React 模式条。
+        if (!shouldKeepNativeDeepSeekUi()) {
+          setTimeout(() => scheduleBurstInject(true), 120);
+        }
       },
       true
     );

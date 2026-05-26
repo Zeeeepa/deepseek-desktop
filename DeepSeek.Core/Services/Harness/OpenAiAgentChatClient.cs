@@ -108,10 +108,12 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
         var deltas = new List<WebChatStreamEvent>();
         int promptTokens = 0, completionTokens = 0, totalTokens = 0;
 
-        while (!reader.EndOfStream)
+        while (true)
         {
             ct.ThrowIfCancellationRequested();
             var line = await reader.ReadLineAsync(ct);
+            if (line is null)
+                break;
             if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.Ordinal))
                 continue;
             var data = line["data:".Length..].Trim();

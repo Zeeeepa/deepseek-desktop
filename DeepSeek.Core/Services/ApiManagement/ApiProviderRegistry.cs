@@ -22,15 +22,36 @@ public static class ApiProviderRegistry
                 : new List<ApiProviderEntry>();
 
         EnsureDeepSeekDefault(config, merged);
+        EnsureBuiltinCatalogEntries(config, merged);
         return merged;
+    }
+
+    /// <summary>仅补全已存在内置项的模型列表，不自动创建无账户的内置供应商。</summary>
+    private static void EnsureBuiltinCatalogEntries(AppConfig config, List<ApiProviderEntry> merged)
+    {
+        foreach (var builtin in BuiltinProviderCatalog.All)
+        {
+            var existing = merged.FirstOrDefault(p =>
+                string.Equals(p.Id, builtin.Id, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
+                continue;
+
+            if (existing.Models.Count == 0 && builtin.Models.Length > 0)
+                existing.Models = builtin.Models.ToList();
+        }
     }
 
     private static void EnsureDeepSeekDefault(AppConfig config, List<ApiProviderEntry> merged)
     {
         if (merged.Any(p => string.Equals(p.Id, "deepseek", StringComparison.OrdinalIgnoreCase)))
             return;
+
+        if (!ProviderAvailabilitySync.HasAnyAccount("deepseek")
+            && string.IsNullOrWhiteSpace(config.WebUserToken?.Trim()))
+            return;
+
         merged.Insert(0, CreateDefaultDeepSeek(config));
-        if (File.Exists(ProvidersFilePath))
+        if (File.Exists(ProvidersFilePath) && ProviderAvailabilitySync.HasAnyAccount("deepseek"))
             SaveProviders(merged);
     }
 
@@ -38,10 +59,14 @@ public static class ApiProviderRegistry
     {
         if (string.IsNullOrWhiteSpace(providerId))
             return LoadAll(config).FirstOrDefault(p => p.DefaultForAgent)
-                   ?? LoadAll(config).FirstOrDefault(p => p.Enabled);
+                   ?? LoadAll(config).FirstOrDefault(p => p.Enabled)
+                   ?? CreateDefaultDeepSeek(config);
 
         return LoadAll(config).FirstOrDefault(p =>
-            string.Equals(p.Id, providerId, StringComparison.OrdinalIgnoreCase));
+                   string.Equals(p.Id, providerId, StringComparison.OrdinalIgnoreCase))
+               ?? (string.Equals(providerId, "deepseek", StringComparison.OrdinalIgnoreCase)
+                   ? CreateDefaultDeepSeek(config)
+                   : null);
     }
 
     public static ApiProviderEntry CreateDefaultDeepSeek(AppConfig config) => new()
@@ -129,6 +154,43 @@ public static class ApiProviderRegistry
             return false;
         SaveProviders(list);
         return true;
+    }
+
+    /// <summary>复制自定义供应商配置（对齐 Chat2API CustomProviderManager.duplicate）。</summary>
+    public static ApiProviderEntry Duplicate(AppConfig config, string sourceId, string? newName = null)
+    {
+        var source = Get(config, sourceId)
+                     ?? throw new InvalidOperationException($"供应商不存在: {sourceId}");
+
+        if (BuiltinProviderCatalog.Find(source.Id) is not null
+            && source.Kind != ApiProviderKinds.Custom)
+            throw new InvalidOperationException("内置供应商不可复制，请添加自定义供应商");
+
+        var newId = "custom-" + Guid.NewGuid().ToString("N")[..10];
+        var copy = new ApiProviderEntry
+        {
+            Id = newId,
+            DisplayName = string.IsNullOrWhiteSpace(newName) ? $"{source.DisplayName} (副本)" : newName.Trim(),
+            Kind = ApiProviderKinds.Custom,
+            RouteMode = source.RouteMode,
+            BaseUrl = source.BaseUrl,
+            Enabled = source.Enabled,
+            Models = source.Models.ToList(),
+            ModelMappings = source.ModelMappings.Select(m => new ModelMappingEntry
+            {
+                RequestModel = m.RequestModel,
+                ActualModel = m.ActualModel
+            }).ToList(),
+            DefaultForAgent = false,
+            DefaultForChat = false
+        };
+
+        var apiKey = ResolveApiKey(source);
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            CredentialVault.Set(newId, "api_key", apiKey);
+
+        AddOrUpdate(config, copy);
+        return copy;
     }
 
     private static List<ApiProviderEntry> LoadFromFile()

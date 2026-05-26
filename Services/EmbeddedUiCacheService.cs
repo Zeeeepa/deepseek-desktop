@@ -20,19 +20,33 @@ public static class EmbeddedUiCacheService
         | CoreWebView2BrowsingDataKinds.DiskCache
         | CoreWebView2BrowsingDataKinds.ServiceWorkers;
 
-    public static async Task EnsureFreshUiAsync(CoreWebView2Profile profile, CancellationToken ct = default)
+    public static async Task EnsureFreshUiAsync(CoreWebView2 core, CancellationToken ct = default)
     {
-        var current = AppNavigation.EmbeddedUiBuild.ToString();
-        var previous = File.Exists(BuildMarkerPath)
-            ? (await File.ReadAllTextAsync(BuildMarkerPath, ct).ConfigureAwait(false)).Trim()
-            : "";
+        try
+        {
+            var current = AppNavigation.EmbeddedUiBuild.ToString();
+            var previous = File.Exists(BuildMarkerPath)
+                ? (await File.ReadAllTextAsync(BuildMarkerPath, ct).ConfigureAwait(false)).Trim()
+                : "";
 
-        if (string.Equals(previous, current, StringComparison.Ordinal))
-            return;
+            if (string.Equals(previous, current, StringComparison.Ordinal))
+                return;
 
-        await profile.ClearBrowsingDataAsync(EmbeddedUiCacheKinds).ConfigureAwait(false);
+            try
+            {
+                await core.Profile.ClearBrowsingDataAsync(EmbeddedUiCacheKinds).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is NotImplementedException or InvalidCastException)
+            {
+                // 系统 WebView2 运行时过旧，不支持 Profile2；跳过清缓存，应用仍可启动。
+            }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(BuildMarkerPath)!);
-        await File.WriteAllTextAsync(BuildMarkerPath, current, ct).ConfigureAwait(false);
+            Directory.CreateDirectory(Path.GetDirectoryName(BuildMarkerPath)!);
+            await File.WriteAllTextAsync(BuildMarkerPath, current, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // 缓存刷新失败不应阻止主窗口启动。
+        }
     }
 }

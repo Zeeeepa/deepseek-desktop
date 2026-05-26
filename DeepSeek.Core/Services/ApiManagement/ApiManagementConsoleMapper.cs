@@ -10,7 +10,27 @@ public static class ApiManagementConsoleMapper
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var builtin = BuiltinProviderCatalog.Find(entry.Id);
         var accounts = ProviderAccountStore.ByProvider(entry.Id);
-        var active = accounts.Count(a => a.Status == "active");
+        var active = accounts.Count(a =>
+            string.Equals(a.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && ProviderAvailabilitySync.AccountHasCredentials(entry, a, config));
+
+        var requiresAccount = BuiltinProviderCatalog.Find(entry.Id) is not null
+                              || entry.Kind == ApiProviderKinds.BuiltinWeb;
+        var hasUsableAccount = active > 0 && ProviderAvailabilitySync.HasUsableAccount(entry, config);
+
+        string status;
+        bool enabledForUi;
+        if (requiresAccount && !hasUsableAccount)
+        {
+            status = "offline";
+            enabledForUi = false;
+        }
+        else
+        {
+            status = ResolveStatus(entry, config, probeHealth, hasUsableAccount);
+            var isOnline = string.Equals(status, "online", StringComparison.OrdinalIgnoreCase);
+            enabledForUi = entry.Enabled && isOnline;
+        }
 
         string authType = builtin?.AuthType ?? MapAuthType(entry);
         string description = builtin?.DescriptionZh ?? entry.DisplayName;
@@ -20,14 +40,6 @@ public static class ApiManagementConsoleMapper
 
         if (entry.Id == "deepseek" && models.Length == 0)
             models = DsdOpenAiCompat.ListModelIds(config).ToArray();
-
-        var adapter = ApiRouteResolver.CreateAdapterForEntry(entry);
-        var health = probeHealth
-            ? adapter.ProbeHealthAsync(config).GetAwaiter().GetResult()
-            : new ApiProviderHealth { Online = false, Message = "" };
-
-        if (accounts.Any(a => a.Status == "active"))
-            health = new ApiProviderHealth { Online = true, Message = "账户已配置" };
 
         var uiType = entry.Kind switch
         {
@@ -44,14 +56,16 @@ public static class ApiManagementConsoleMapper
             authType,
             apiEndpoint = string.IsNullOrWhiteSpace(entry.BaseUrl) ? config.ApiBaseUrl : entry.BaseUrl,
             headers = new Dictionary<string, string>(),
-            enabled = entry.Enabled,
+            enabled = enabledForUi,
             createdAt = now,
             updatedAt = now,
             description,
             supportedModels = models,
-            status = health.Online ? "online" : "offline",
+            status,
             lastStatusCheck = now,
-            credentialFields = builtin?.CredentialFields ?? Array.Empty<object>()
+            credentialFields = builtin?.CredentialFields ?? Array.Empty<object>(),
+            accountCount = accounts.Count,
+            activeAccountCount = active
         };
     }
 
@@ -61,6 +75,11 @@ public static class ApiManagementConsoleMapper
         foreach (var kv in rec.Credentials)
             creds[kv.Key] = includeCredentials ? kv.Value : Mask(kv.Value);
 
+        var usage = RequestLogAccountStats.TryGet(rec.Id);
+        var requestCount = Math.Max(rec.RequestCount, usage.Total);
+        var todayUsed = Math.Max(rec.TodayUsed, usage.Today);
+        var lastUsed = Math.Max(rec.LastUsed, usage.LastTimestamp);
+
         return new
         {
             id = rec.Id,
@@ -69,30 +88,38 @@ public static class ApiManagementConsoleMapper
             email = rec.Email,
             credentials = creds,
             status = rec.Status,
-            lastUsed = rec.LastUsed,
+            lastUsed,
             createdAt = rec.CreatedAt,
             updatedAt = rec.UpdatedAt,
-            requestCount = rec.RequestCount
+            lastStatusCheck = rec.UpdatedAt,
+            requestCount,
+            todayUsed,
+            dailyLimit = rec.DailyLimit
         };
     }
 
-    public static string ResolveStatus(ApiProviderEntry entry, AppConfig config)
+    public static string ResolveStatus(
+        ApiProviderEntry entry,
+        AppConfig config,
+        bool probeHealth = true,
+        bool? hasUsableAccount = null)
     {
-        if (entry.Kind == ApiProviderKinds.BuiltinWeb)
-        {
-            return ProviderAccountStore.ByProvider(entry.Id).Any(a =>
-                       a.Status == "active"
-                       && !string.IsNullOrWhiteSpace(
-                           AccountCredentials.ResolveWebUserToken(a, config)))
-                ? "online"
-                : "offline";
-        }
+        if (hasUsableAccount == false)
+            return "offline";
 
-        if (ProviderAccountStore.ByProvider(entry.Id).Any(a => a.Status == "active"))
+        if (hasUsableAccount == true || ProviderAvailabilitySync.HasUsableAccount(entry, config))
             return "online";
+
+        // 内置网页 Token 类供应商：无账户时一律离线，不用公网探活（避免 GLM 等误显示在线）
+        if (BuiltinProviderCatalog.Find(entry.Id) is not null
+            || entry.Kind == ApiProviderKinds.BuiltinWeb)
+            return "offline";
 
         if (!string.IsNullOrWhiteSpace(CredentialVault.TryGet(entry.Id, "api_key")))
             return "online";
+
+        if (!probeHealth)
+            return "offline";
 
         var adapter = ApiRouteResolver.CreateAdapterForEntry(entry);
         var health = adapter.ProbeHealthAsync(config).GetAwaiter().GetResult();

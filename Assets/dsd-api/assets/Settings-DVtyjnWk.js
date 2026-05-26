@@ -870,6 +870,9 @@ function ManagementApiSettings() {
     ] }) })
   ] });
 }
+function LoadBalanceMount() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { id: "ds-loadbalance-root", className: "space-y-4" });
+}
 function Settings() {
   const { t } = useTranslation();
   const { fetchConfig, setConfig } = useSettingsStore();
@@ -907,14 +910,14 @@ function Settings() {
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(TabsTrigger, { value: "loadbalance", className: "flex items-center gap-2 py-2", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Key, { className: "h-4 w-4" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden sm:inline", children: "璐熻浇鍧囪　" })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden sm:inline", children: "负载均衡" })
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "appearance", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(AppearanceSettings, {}) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "general", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(GeneralSettings, {}) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "data", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(DataManagement, {}) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "security", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(SecuritySettings, {}) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "loadbalance", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(function LoadBalanceMount(){return /* @__PURE__ */ jsxRuntimeExports.jsx("div",{id:"ds-loadbalance-root",className:"space-y-4"})} LoadBalanceMount(),{}) })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "loadbalance", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(LoadBalanceMount, {}) })
     ] })
   ] });
 }

@@ -16,6 +16,6 @@ Git 历史中的提交均出自上述账号；不接收未署名第三方 PR 合
 
 - 根目录 `README.md`
 - `docs/INSTALL.md`
-- `RELEASE_v2.2.0.md` 及后续 `RELEASE_v*.md` 中标注「撰写：Auto」的章节
+- `RELEASE_v2.2.0.md`、`RELEASE_v2.4.0.md` 及后续 `RELEASE_v*.md` 中标注「撰写：Auto」的章节
 
 技术设计与实现细节以 `docs/` 内各专题文档及源码为准。

@@ -104,6 +104,16 @@ public sealed class DsdApiSessionStore
         lock (_lock) _sessions.Clear();
     }
 
+    public int CleanExpired(AppConfig config)
+    {
+        lock (_lock)
+        {
+            var before = _sessions.Count;
+            PurgeExpiredLocked(config);
+            return Math.Max(0, before - _sessions.Count);
+        }
+    }
+
     private static bool IsMultiTurn(AppConfig config) =>
         string.Equals(config.DsdApiSessionMode, "multi", StringComparison.OrdinalIgnoreCase);
 

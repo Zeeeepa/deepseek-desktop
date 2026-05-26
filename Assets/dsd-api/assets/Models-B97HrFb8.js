@@ -706,6 +706,49 @@ function ModelList() {
   const [selectAll, setSelectAll] = reactExports.useState(false);
   const [currentPage, setCurrentPage] = reactExports.useState(1);
   const [effectiveModelsMap, setEffectiveModelsMap] = reactExports.useState({});
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (useProvidersStore.getState().providers.length > 0) return;
+      if (!window.electronAPI?.providers?.getAll) return;
+      try {
+        useProvidersStore.getState().setIsLoading(true);
+        const [providersData, builtinData, accountsData] = await Promise.all([
+          window.electronAPI.providers.getAll(),
+          window.electronAPI.providers.getBuiltin(),
+          window.electronAPI.accounts.getAll()
+        ]);
+        if (cancelled) return;
+        useProvidersStore.getState().setProviders(providersData);
+        useProvidersStore.getState().setBuiltinProviders(builtinData);
+        useProvidersStore.getState().setAccounts(accountsData);
+        const existingStatuses = useProvidersStore.getState().providerStatuses;
+        const statusMap = { ...existingStatuses };
+        const countMap = {};
+        for (const provider of providersData) {
+          if (provider.status) {
+            statusMap[provider.id] = provider.status;
+          } else if (!statusMap[provider.id]) {
+            statusMap[provider.id] = "unknown";
+          }
+          const providerAccounts = accountsData.filter((a) => a.providerId === provider.id);
+          countMap[provider.id] = {
+            total: providerAccounts.length,
+            active: providerAccounts.filter((a) => a.status === "active").length
+          };
+        }
+        useProvidersStore.getState().setProviderStatuses(statusMap);
+        useProvidersStore.getState().setAccountCounts(countMap);
+      } catch (error) {
+        console.error("Failed to bootstrap providers for model list:", error);
+      } finally {
+        if (!cancelled) useProvidersStore.getState().setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const loadEffectiveModels = reactExports.useCallback(async () => {
     try {
       const enabledProviders = providers.filter((p) => p.enabled);
@@ -1082,6 +1125,7 @@ function mergeToolCallingConfig(config, updates) {
 }
 function ToolCallingPanel() {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const { appConfig, saveAppConfig } = useProxyStore();
   const [smokeStatus, setSmokeStatus] = reactExports.useState("not_run");
   const config = appConfig?.toolCallingConfig ?? DEFAULT_TOOL_CALLING_CONFIG;
@@ -1102,9 +1146,25 @@ function ToolCallingPanel() {
       const result = await window.electronAPI?.toolCalling?.runSmoke?.({
         clientAdapterId: config.clientAdapterId
       });
-      setSmokeStatus(result?.success ? "pass" : "failed");
-    } catch {
+      if (result?.success) {
+        setSmokeStatus("pass");
+        toast({ title: t("toolCalling.smoke.title"), description: t("toolCalling.smoke.pass") });
+      } else {
+        setSmokeStatus("failed");
+        const msg = result?.error?.message || result?.error || "测试失败";
+        toast({
+          title: t("toolCalling.smoke.title"),
+          description: typeof msg === "string" ? msg : msg?.message || String(msg),
+          variant: "destructive"
+        });
+      }
+    } catch (e) {
       setSmokeStatus("failed");
+      toast({
+        title: t("toolCalling.smoke.title"),
+        description: e instanceof Error ? e.message : "测试失败",
+        variant: "destructive"
+      });
     }
   };
   const enabled = config.enabled && config.mode !== "off";

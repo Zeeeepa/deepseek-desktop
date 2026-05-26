@@ -65,6 +65,8 @@ public sealed class LocalOpenAiServer : IDisposable
 
     public bool DeleteSession(string sessionId) => _sessions.Delete(sessionId);
 
+    public int CleanExpiredSessions() => _sessions.CleanExpired(_config);
+
     public void UpdateConfig(AppConfig config)
     {
         var portChanged = InternalChatChannel.ResolveExternalApiPort(_config) !=
@@ -280,6 +282,11 @@ public sealed class LocalOpenAiServer : IDisposable
         var routeModel = resolution.ResolvedModel ?? req.ResolvedModel;
         var webToken = AccountCredentials.ResolveWebUserToken(resolution.Account, _config);
         EnsureChannelReady(resolution);
+        var clientSessionId = DsdApiSessionCoordinator.EnsureClientSession(
+            req.SessionId,
+            resolution.Provider.Id,
+            resolution.Account?.Id,
+            routeModel);
 
         var prevRefIds = _web.AgentRefFileIds;
         _web.AgentRefFileIds = req.RefFileIds;
@@ -370,11 +377,21 @@ public sealed class LocalOpenAiServer : IDisposable
         }
 
         if (finalResult is not null &&
-            !string.IsNullOrWhiteSpace(req.SessionId) &&
+            !string.IsNullOrWhiteSpace(clientSessionId) &&
             !string.IsNullOrWhiteSpace(finalResult.ChatSessionId))
-            _sessions.Bind(_config, req.SessionId, finalResult.ChatSessionId);
-        else if (!string.IsNullOrWhiteSpace(req.SessionId))
-            _sessions.Touch(_config, req.SessionId);
+        {
+            _sessions.Bind(_config, clientSessionId, finalResult.ChatSessionId);
+            DsdApiSessionCoordinator.BindProviderSession(
+                clientSessionId,
+                finalResult.ChatSessionId,
+                resolution.Provider.Id,
+                resolution.Account?.Id);
+        }
+        else if (!string.IsNullOrWhiteSpace(clientSessionId))
+        {
+            _sessions.Touch(_config, clientSessionId);
+            DsdApiSessionCoordinator.Touch(clientSessionId);
+        }
 
         RecordRequestLog(req, resolution, routeModel, finalResult, chatSw?.ElapsedMilliseconds ?? 0, stream: true);
     }
@@ -391,6 +408,11 @@ public sealed class LocalOpenAiServer : IDisposable
         var routeModel = resolution.ResolvedModel ?? req.ResolvedModel;
         var webToken = AccountCredentials.ResolveWebUserToken(resolution.Account, _config);
         EnsureChannelReady(resolution);
+        var clientSessionId = DsdApiSessionCoordinator.EnsureClientSession(
+            req.SessionId,
+            resolution.Provider.Id,
+            resolution.Account?.Id,
+            routeModel);
 
         var prevRefIds = _web.AgentRefFileIds;
         _web.AgentRefFileIds = req.RefFileIds;
@@ -449,11 +471,21 @@ public sealed class LocalOpenAiServer : IDisposable
                 reasoning > 0 ? $"reasoningChars={reasoning}" : null);
         }
 
-        if (!string.IsNullOrWhiteSpace(req.SessionId) &&
+        if (!string.IsNullOrWhiteSpace(clientSessionId) &&
             !string.IsNullOrWhiteSpace(result.ChatSessionId))
-            _sessions.Bind(_config, req.SessionId, result.ChatSessionId);
-        else if (!string.IsNullOrWhiteSpace(req.SessionId))
-            _sessions.Touch(_config, req.SessionId);
+        {
+            _sessions.Bind(_config, clientSessionId, result.ChatSessionId);
+            DsdApiSessionCoordinator.BindProviderSession(
+                clientSessionId,
+                result.ChatSessionId,
+                resolution.Provider.Id,
+                resolution.Account?.Id);
+        }
+        else if (!string.IsNullOrWhiteSpace(clientSessionId))
+        {
+            _sessions.Touch(_config, clientSessionId);
+            DsdApiSessionCoordinator.Touch(clientSessionId);
+        }
 
         RecordRequestLog(req, resolution, routeModel, result, chatSw?.ElapsedMilliseconds ?? 0, stream: false, chatError);
         return result;

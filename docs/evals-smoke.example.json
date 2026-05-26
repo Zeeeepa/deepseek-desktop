@@ -1,7 +1,0 @@
-[
-  {
-    "prompt": "Say hello in one short sentence.",
-    "expectedContains": [],
-    "tags": ["smoke"]
-  }
-]

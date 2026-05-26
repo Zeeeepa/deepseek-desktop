@@ -76,9 +76,9 @@ public partial class MainWindow : System.Windows.Window
             WebView.DefaultBackgroundColor = WebViewBackground;
             AgentWebView.DefaultBackgroundColor = WebViewBackground;
 
-            var webProfile = WebView.CoreWebView2?.Profile;
-            if (webProfile is not null)
-                await EmbeddedUiCacheService.EnsureFreshUiAsync(webProfile);
+            var chatCoreForCache = WebView.CoreWebView2;
+            if (chatCoreForCache is not null)
+                await EmbeddedUiCacheService.EnsureFreshUiAsync(chatCoreForCache);
 
             _apiBridgeHost = new WebChatBridgeHost(BridgeWebView);
             await _apiBridgeHost.AttachAndNavigateAsync(env);

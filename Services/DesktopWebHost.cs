@@ -18,8 +18,8 @@ public sealed class DesktopWebHost : IDesktopWebHost
     private readonly WebView2 _agentView;
     private InjectScheduler? _injectScheduler;
 
-    IDdPageMessenger IDdWebPages.Chat => Chat;
-    IDdPageMessenger IDdWebPages.Agent => Agent;
+    IDdPageMessenger IDesktopWebHost.Chat => Chat;
+    IDdPageMessenger IDesktopWebHost.Agent => Agent;
 
     public WebInjectService Chat { get; }
     public WebInjectService Agent { get; }

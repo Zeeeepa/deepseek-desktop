@@ -2319,6 +2319,25 @@
         } catch (_) {}
         return true;
       }
+      if (msg.type === "settingsBootstrap") {
+        try {
+          iframe.contentWindow.postMessage(JSON.stringify(msg), "*");
+        } catch (_) {}
+        return true;
+      }
+      return false;
+    }
+
+    if (state.embeddedPanel === "automations") {
+      if (
+        msg.type === "agentAutomation" ||
+        (msg.reqId && String(msg.reqId).startsWith("a"))
+      ) {
+        try {
+          iframe.contentWindow.postMessage(JSON.stringify(msg), "*");
+        } catch (_) {}
+        return true;
+      }
       return false;
     }
 
@@ -2874,9 +2893,51 @@
     if (wChip) wChip.title = workspaceUi.currentPath || "";
   }
 
+  function ensureCtxMenuPortals() {
+    const menu = $("ctx-menu");
+    const backdrop = $("ctx-backdrop");
+    if (backdrop && backdrop.parentElement !== document.body) {
+      document.body.appendChild(backdrop);
+    }
+    if (menu && menu.parentElement !== document.body) {
+      document.body.appendChild(menu);
+    }
+  }
+
+  function positionCtxMenu(menu, anchorEl, kind) {
+    const margin = 12;
+    const gap = 6;
+    const rect = anchorEl.getBoundingClientRect();
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+
+    menu.style.visibility = "hidden";
+    menu.hidden = false;
+
+    const menuW = menu.offsetWidth;
+    const menuH = menu.offsetHeight;
+
+    let left = rect.left;
+    if (left + menuW > vw - margin) {
+      left = rect.right - menuW;
+    }
+    left = Math.min(Math.max(margin, left), Math.max(margin, vw - menuW - margin));
+
+    let top = rect.bottom + gap;
+    if (top + menuH > vh - margin) {
+      top = Math.max(margin, rect.top - menuH - gap);
+    }
+
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+    menu.style.right = "auto";
+    menu.style.visibility = "";
+  }
+
   function closeCtxMenu() {
     workspaceUi.openMenu = null;
     workspaceUi.menuQuery = "";
+    workspaceUi.menuAnchor = null;
     const menu = $("ctx-menu");
     const backdrop = $("ctx-backdrop");
     if (menu) menu.hidden = true;
@@ -2888,22 +2949,22 @@
   }
 
   function openCtxMenu(kind, anchorEl) {
+    ensureCtxMenuPortals();
     const menu = $("ctx-menu");
     const backdrop = $("ctx-backdrop");
     if (!menu || !anchorEl) return;
     workspaceUi.openMenu = kind;
+    workspaceUi.menuAnchor = anchorEl;
     anchorEl.setAttribute("aria-expanded", "true");
     menu.replaceChildren();
     menu.hidden = false;
     if (backdrop) backdrop.hidden = false;
 
-    const rect = anchorEl.getBoundingClientRect();
-    menu.style.left = Math.max(8, rect.left) + "px";
-    menu.style.top = rect.bottom + 6 + "px";
-
     if (kind === "workspace") buildWorkspaceMenu(menu);
     else if (kind === "mode") buildModeMenu(menu);
     else if (kind === "model") buildModelMenu(menu);
+
+    positionCtxMenu(menu, anchorEl, kind);
   }
 
   function menuSection(menu, heading) {
@@ -2952,6 +3013,8 @@
       workspaceUi.menuQuery = e.target.value || "";
       menu.replaceChildren();
       buildWorkspaceMenu(menu);
+      const anchor = workspaceUi.menuAnchor;
+      if (anchor) positionCtxMenu(menu, anchor, "workspace");
       const next = menu.querySelector(".ds-ctx-menu-search");
       if (next) {
         next.focus();
@@ -3073,6 +3136,15 @@
   }
 
   function initWorkspaceUi() {
+    ensureCtxMenuPortals();
+    window.addEventListener("resize", () => {
+      if (!workspaceUi.openMenu) return;
+      const menu = $("ctx-menu");
+      const anchor = workspaceUi.menuAnchor;
+      if (menu && !menu.hidden && anchor) {
+        positionCtxMenu(menu, anchor, workspaceUi.openMenu);
+      }
+    });
     $("btn-workspace-add")?.addEventListener("click", () => pickWorkspaceFolder().catch(() => {}));
     $("btn-workspace-filter")?.addEventListener("click", () => {
       workspaceUi.filterOpen = !workspaceUi.filterOpen;

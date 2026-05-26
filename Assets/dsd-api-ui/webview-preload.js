@@ -52,17 +52,26 @@
 
   var ipcTimeoutMs = 20000;
 
+  function ipcChannelHasTimeout(channel) {
+    if (!channel) return true;
+    if (channel.indexOf("oauth:") === 0) return false;
+    if (channel.indexOf("toolCalling:") === 0) return false;
+    return true;
+  }
+
   function invoke(channel) {
     var args = Array.prototype.slice.call(arguments, 1);
     return new Promise(function (resolve, reject) {
       var id = ++seq;
       pending.set(id, { resolve: resolve, reject: reject });
       post("ipcInvoke", { id: id, channel: channel, args: args });
-      setTimeout(function () {
-        if (!pending.has(id)) return;
-        pending.delete(id);
-        reject(new Error("IPC timeout: " + channel));
-      }, ipcTimeoutMs);
+      if (ipcChannelHasTimeout(channel)) {
+        setTimeout(function () {
+          if (!pending.has(id)) return;
+          pending.delete(id);
+          reject(new Error("IPC timeout: " + channel));
+        }, ipcTimeoutMs);
+      }
     });
   }
 

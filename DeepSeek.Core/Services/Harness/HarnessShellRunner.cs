@@ -79,7 +79,7 @@ public static class HarnessShellRunner
     {
         try
         {
-            while (!reader.EndOfStream)
+            while (true)
             {
                 ct.ThrowIfCancellationRequested();
                 var line = await reader.ReadLineAsync(ct);

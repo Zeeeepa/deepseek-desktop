@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using DeepSeekBrowser.Models;
+using DeepSeekBrowser.Services.ApiManagement;
 
 namespace DeepSeekBrowser.Services;
 
@@ -84,7 +85,19 @@ public sealed class DsdApiRequestLogStore
             _logs.Add(entry);
             Trim();
             Persist();
+
+            if (!string.IsNullOrWhiteSpace(draft.AccountId)
+                && !string.Equals(draft.AccountId, "embedded", StringComparison.OrdinalIgnoreCase))
+            {
+                if (draft.Success)
+                    ProviderAccountStore.RecordSuccess(draft.AccountId);
+                else
+                    ProviderAccountStore.RecordFailure(draft.AccountId);
+            }
         }
+
+        if (_config.Enabled && _config.MaxEntries > 0)
+            DsdApiIpcEventHub.Publish("requestLogs:new", entry);
 
         return entry;
     }

@@ -1,6 +1,6 @@
 # DeepSeek Desktop 安装与升级指南
 
-> 撰写：**Auto**（Cursor Agent） · 对应发布：**v2.3.0** · 仓库：[fanstars2318/deepseek-desktop](https://github.com/fanstars2318/deepseek-desktop)
+> 撰写：**Auto**（Cursor Agent） · 对应发布：**v2.4.0** · 仓库：[fanstars2318/deepseek-desktop](https://github.com/fanstars2318/deepseek-desktop)
 
 ---
 
@@ -12,18 +12,18 @@
 | 运行时 | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)（框架依赖发布） |
 | Web 引擎 | [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) |
 | 磁盘 | 解压后约 30–80 MB（含 `Assets` 与依赖 DLL） |
-| 网络 | 首次使用需访问 DeepSeek 网页完成登录 |
+| 网络 | 首次使用需访问 DeepSeek 网页或供应商 OAuth 完成登录 |
 
 ---
 
 ## 2. 从 GitHub Release 安装
 
 1. 打开 [Releases](https://github.com/fanstars2318/deepseek-desktop/releases)。
-2. 在最新版本（例如 **v2.3.0**）的 **Assets** 中下载：
-   - **`DeepSeek-Desktop-v2.3.0-win-x64.zip`** — WPF 主线 Windows x64 便携包
+2. 在最新版本（**v2.4.0**）的 **Assets** 中下载：
+   - **`DeepSeek-Desktop-v2.4.0-win-x64.zip`** — WPF 主线 Windows x64 便携包
 3. 将 zip **完整解压**到目标文件夹，例如 `D:\Apps\DeepSeekDesktop\`。
 4. 双击 **`DeepSeek.exe`** 启动。
-5. 首次启动在嵌入网页中登录 DeepSeek 账号；Agent 与 DSD API 将复用该会话（见 [AGENT_USER_GUIDE.md](./AGENT_USER_GUIDE.md)）。
+5. 首次启动在嵌入网页中登录 DeepSeek 账号；在 Agent / **DSD API** 设置中可添加其他 OpenAI 兼容供应商（支持内嵌 OAuth）。
 
 **不要**只复制单个 `DeepSeek.exe`：必须与同目录下的 `DeepSeek.dll`、`DeepSeek.Core.dll`、`Assets\`、`WebView2Loader.dll` 等一并保留。
 
@@ -47,12 +47,11 @@ DeepSeekDesktop/
 
 ## 4. 用户数据与配置位置
 
-默认写入当前用户配置目录（与版本无关）：
-
 | 路径 | 内容 |
 |------|------|
-| `%LocalAppData%\deepseek_desktop\` | 桌面壳配置、日志、缓存 |
-| `%UserProfile%\.deepseek\` | Agent / Harness 配置（如 `config.json`、`config.toml`） |
+| `%LocalAppData%\deepseek_desktop\` | 桌面壳配置、日志、DSD API 请求日志 |
+| `%UserProfile%\.deepseek\` | Agent / Harness 配置（如 `config.json`） |
+| `%UserProfile%\.deepseek\provider-accounts.json` | DSD API 多供应商账户（若已配置） |
 
 升级 Release 时**无需**删除上述目录；若遇异常可备份后清理缓存再试。
 
@@ -64,8 +63,13 @@ DeepSeekDesktop/
 git clone https://github.com/fanstars2318/deepseek-desktop.git
 cd deepseek-desktop
 .\build.ps1
-# 输出目录默认为 publish/（见 scripts/Get-PublishDir.ps1）
 .\publish\DeepSeek.exe
+```
+
+本地打包 zip（不上传 GitHub）：
+
+```powershell
+.\scripts\package-release.ps1 -Version 2.4.0
 ```
 
 ---
@@ -73,10 +77,10 @@ cd deepseek-desktop
 ## 6. 升级
 
 1. 关闭正在运行的 `DeepSeek.exe`（含托盘图标）。
-2. 下载新版本 zip，解压到**新文件夹**或覆盖旧目录（建议先备份 `Assets` 外的自定义修改）。
+2. 下载新版本 zip，解压到新文件夹或覆盖旧目录（建议先备份自定义修改）。
 3. 再次运行 `DeepSeek.exe`；配置目录会自动沿用。
 
-跨大版本（如 v2.0 → v2.2）请参阅对应 [Release 说明](https://github.com/fanstars2318/deepseek-desktop/releases) 与 [MIGRATION.md](./MIGRATION.md)。
+跨版本说明见 [Releases](https://github.com/fanstars2318/deepseek-desktop/releases) 中各版本的 Release Notes。
 
 ---
 
@@ -90,13 +94,17 @@ cd deepseek-desktop
 
 安装或修复 **WebView2 Runtime**；企业环境需允许 `msedgewebview2.exe` 运行。
 
+### OAuth 登录窗口无法打开
+
+确认 WebView2 正常、网络可访问供应商授权页；在 DSD API 设置中重试「连接账户」。
+
 ### SmartScreen 拦截
 
 本软件为社区构建、未代码签名。若你信任维护者 [@fanstars2318](https://github.com/fanstars2318) 与本仓库源码，可在「更多信息」中选择仍要运行；亦可自行 `git clone` 后执行 `.\build.ps1` 本地编译。
 
-### Agent 无响应
+### Agent 或 DSD API 无响应
 
-在 Agent 设置中运行 **doctor**；确认网页已登录、工作区路径可写。详见 [AGENT_USER_GUIDE.md](./AGENT_USER_GUIDE.md)。
+确认网页 DeepSeek 已登录；在 Agent 设置中运行 **doctor**；检查 `%LocalAppData%\deepseek_desktop\logs\` 日志。
 
 ---
 
