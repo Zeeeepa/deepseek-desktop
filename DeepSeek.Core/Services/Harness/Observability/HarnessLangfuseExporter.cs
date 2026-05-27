@@ -208,6 +208,60 @@ public static class HarnessLangfuseExporter
         return batch;
     }
 
+    /// <summary>Live export: push a single span as it completes (requires AgentLangfuseLiveExport).</summary>
+    public static async Task<bool> TryExportSpanLiveAsync(
+        HarnessTraceSpan span,
+        string runId,
+        string traceId,
+        AppConfig config,
+        CancellationToken ct = default)
+    {
+        if (!IsConfigured(config))
+            return false;
+
+        try
+        {
+            var host = NormalizeHost(config.AgentLangfuseHost);
+            var batch = new List<IngestionEvent>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Type = "span-create",
+                    Timestamp = span.StartUtc,
+                    Body = new Dictionary<string, object?>
+                    {
+                        ["id"] = span.SpanId,
+                        ["traceId"] = traceId,
+                        ["parentObservationId"] = span.ParentSpanId,
+                        ["name"] = span.Name,
+                        ["startTime"] = span.StartUtc,
+                        ["endTime"] = span.EndUtc ?? span.StartUtc,
+                        ["metadata"] = new Dictionary<string, object?>
+                        {
+                            ["runId"] = runId,
+                            ["status"] = span.Status
+                        }
+                    }
+                }
+            };
+
+            var url = host + "/api/public/ingestion";
+            var payload = JsonSerializer.Serialize(new { batch }, JsonOptions);
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+            var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+                config.AgentLangfusePublicKey + ":" + config.AgentLangfuseSecretKey));
+            req.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
+            using var res = await Http.SendAsync(req, ct);
+            return res.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string NormalizeHost(string? host)
     {
         var h = string.IsNullOrWhiteSpace(host) ? "https://cloud.langfuse.com" : host.Trim();

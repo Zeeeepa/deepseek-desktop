@@ -79,8 +79,8 @@ public static class HarnessComposer
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("你是 DeepSeek Edge Agent（DSD Harness · Phase 驱动）。");
-        sb.AppendLine("用户无需指定工具/MCP/Skill；参照「运行前意图分析」与下方工具说明选用已验证存在的工具，禁止编造未列出的 MCP 名。");
-        sb.AppendLine("寒暄或简单问答：直接简短回复，通常无需工具；有明确任务时再调用工具并充分推理。");
+        HarnessAgentDoctrine.Append(sb);
+        sb.AppendLine("用户无需指定工具/MCP/Skill；按下方工具说明选用已验证存在的工具，禁止编造未列出的 MCP 名。");
         sb.AppendLine("工作区根：" + workspaceRoot + "；虚拟路径前缀：" + HarnessVirtualPathMapper.WorkspaceVirtual + "/、"
                         + HarnessVirtualPathMapper.OutputsVirtual + "/、"
                         + HarnessVirtualPathMapper.UploadsVirtual + "/（只读）、"
@@ -212,7 +212,40 @@ public static class HarnessComposer
     private static void AppendExecuteInstructions(System.Text.StringBuilder sb)
     {
         sb.AppendLine("【Phase: Execute · 执行】读写/shell 完成任务；delegate_agent / parallel_explore 按需使用。");
+        sb.AppendLine(
+            "首轮：用【任务分析】1～2 句说明计划，并在同一轮内立即发出 <tool_calling> 工具（可先 list_dir 再 write_file）；禁止只写分析不调用工具。");
+        sb.AppendLine("多步任务先 UpdatePlan，再逐项执行；修改已有文件优先 edit（old_string/new_string），新建文件用 write_file。");
+        sb.AppendLine("工具调用必须使用 <tool_calling><name>…</name><arguments>{…}</arguments></tool_calling>，勿写 Call: 纯文本。");
+        sb.AppendLine("禁止在正文或 ```json``` 中输出 {\"name\":\"…\",\"arguments\":…} 形式的工具 JSON；工具只通过 <tool_calling> 发出。");
     }
+
+    public static ChatMessage BuildIncompleteToolCallRetryMessage() => new()
+    {
+        Role = "user",
+        Content =
+            "你提到了工具名但未给出可执行的 <tool_calling> 块（禁止仅用 Call: 文本）。\n" +
+            "请立即输出完整格式，例如：\n" +
+            "<tool_calling>\n<name>write_file</name>\n" +
+            "<arguments>{\"file_path\":\"index.html\",\"content\":\"...\"}</arguments>\n</tool_calling>"
+    };
+
+    public static ChatMessage BuildExecuteProseOnlyRetryMessage() => new()
+    {
+        Role = "user",
+        Content =
+            "你已输出【任务分析】/计划，但尚未调用任何工具（勿只写空 ```json``` 代码块）。\n" +
+            "请在本轮直接发出可执行工具，例如：\n" +
+            "<tool_calling>\n<name>list_dir</name>\n<arguments>{\"path\":\".\"}</arguments>\n</tool_calling>\n" +
+            "然后再 write_file 写入完整可运行文件。"
+    };
+
+    public static ChatMessage BuildEmptyExecuteRetryMessage(string userPrompt) => new()
+    {
+        Role = "user",
+        Content =
+            "上一条为空。请先写【任务分析】1～2 句，再对「" + (userPrompt ?? "").Trim() +
+            "」调用 write_file / list_dir / run_shell 或给出可见正文，禁止再次空回复。"
+    };
 
     private static void AppendVerifyInstructions(System.Text.StringBuilder sb)
     {

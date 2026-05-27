@@ -41,9 +41,19 @@ Write-Host "  OK agentHarnessState + /reload in agent UI"
 
 $cfgPath = Join-Path $env:LOCALAPPDATA "deepseek_desktop\config.json"
 if (Test-Path $cfgPath) {
-    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-    if ($null -ne $cfg.UseNativeHarness -and $cfg.UseNativeHarness -eq $false) {
-        Write-Host "  OK UseNativeHarness=false in user config (native Harness still used)"
+    $repairOutcome = & (Join-Path $PSScriptRoot "Invoke-ConfigFileRepair.ps1") -Configuration Release -RepoRoot $root
+    if ($repairOutcome -eq "Repaired") {
+        Write-Host "  OK user config.json repaired (UTF-8 / truncated path)"
+    }
+    try {
+        $cfgRaw = [System.IO.File]::ReadAllText($cfgPath, [System.Text.UTF8Encoding]::new($false))
+        $cfg = $cfgRaw | ConvertFrom-Json
+        if ($null -ne $cfg.UseNativeHarness -and $cfg.UseNativeHarness -eq $false) {
+            Write-Host "  OK UseNativeHarness=false in user config (native Harness still used)"
+        }
+    }
+    catch {
+        Write-Host "  WARN user config.json invalid (app loads defaults on start): $($_.Exception.Message)"
     }
 }
 

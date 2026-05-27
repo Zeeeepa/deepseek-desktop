@@ -47,7 +47,7 @@ public static class ApiRouteResolver
         {
             provider = ResolveProvider(config, providerId, requestedModel)
                        ?? ApiProviderRegistry.CreateDefaultDeepSeek(config);
-            account = null;
+            account = SelectFallbackAccount(provider.Id, config);
             resolvedModel = DsdOpenAiCompat.MapModel(requestedModel, config);
         }
 
@@ -112,4 +112,11 @@ public static class ApiRouteResolver
             ApiProviderKinds.Sidecar => new ProviderSidecarAdapter(provider),
             _ => new OpenAiCompatibleAdapter(provider)
         };
+
+    private static ProviderAccountRecord? SelectFallbackAccount(string providerId, AppConfig config) =>
+        ProviderAccountStore.ByProvider(providerId)
+            .FirstOrDefault(a =>
+                string.Equals(a.Status, "active", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(
+                    AccountCredentials.ResolveWebUserToken(a, config, allowConfigFallback: false)));
 }

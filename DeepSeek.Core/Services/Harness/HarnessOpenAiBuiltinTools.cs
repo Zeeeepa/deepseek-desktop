@@ -172,8 +172,10 @@ public static class HarnessOpenAiBuiltinTools
         return list;
     }
 
-    public static string MapToBuiltinExecutorName(string openAiName) =>
-        openAiName.ToLowerInvariant() switch
+    public static string MapToBuiltinExecutorName(string openAiName)
+    {
+        var n = HarnessXmlToolCallParser.NormalizeToolName(openAiName);
+        return n.ToLowerInvariant() switch
         {
             "read" => "read_file",
             "write" => "write_file",
@@ -183,8 +185,9 @@ public static class HarnessOpenAiBuiltinTools
             "grep" => "grep",
             "glob" => "glob",
             "image_analyze" => "image_analyze",
-            _ => openAiName
+            _ => n
         };
+    }
 
     private static object Tool(string name, string description, object parameters) => new
     {

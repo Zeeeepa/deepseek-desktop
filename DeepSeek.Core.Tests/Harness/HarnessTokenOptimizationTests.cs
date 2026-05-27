@@ -10,7 +10,8 @@ public sealed class HarnessTokenOptimizationTests
     public void AppConfig_token_defaults_are_conservative()
     {
         var config = new AppConfig();
-        Assert.True(config.AgentIntentUseLlmPlanner);
+        Assert.False(config.AgentIntentUseLlmPlanner);
+        Assert.True(config.AgentPreferBuiltinOnExecute);
         Assert.True(config.AgentIntentCacheEnabled);
         Assert.True(config.AgentPromptMinimalMode);
         Assert.Equal(8, config.AgentMcpToolsMaxInRequest);

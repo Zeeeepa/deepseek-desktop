@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DeepSeek.Core\DeepSeek.Core.csproj" />
+    <ProjectReference Include="..\src\DeepSeek.Domain\DeepSeek.Domain.csproj" />
+    <ProjectReference Include="..\src\DeepSeek.Infrastructure\DeepSeek.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

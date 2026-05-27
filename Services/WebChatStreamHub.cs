@@ -38,6 +38,13 @@ internal sealed class WebChatStreamHub : IDisposable
         SignalScriptCompleted();
     }
 
+    public void Cancel()
+    {
+        _channel.Writer.TryComplete();
+        if (!_scriptDone.Task.IsCompleted)
+            _scriptDone.TrySetResult();
+    }
+
     public async IAsyncEnumerable<WebChatStreamEvent> ReadAllAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {

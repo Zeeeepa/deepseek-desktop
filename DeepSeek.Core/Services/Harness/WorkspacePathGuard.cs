@@ -2,6 +2,12 @@ namespace DeepSeekBrowser.Services.Harness;
 
 public static class WorkspacePathGuard
 {
+    private static readonly string[] BlockedPathFragments =
+    [
+        ".ssh", ".gnupg", "id_rsa", "AppData\\Roaming\\Microsoft\\Credentials",
+        "\\Windows\\", "\\Program Files\\"
+    ];
+
     public static string ResolveUnderWorkspace(string workspaceRoot, string? relativeOrAbsolute)
     {
         if (string.IsNullOrWhiteSpace(relativeOrAbsolute))
@@ -16,6 +22,17 @@ public static class WorkspacePathGuard
         if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("路径超出工作区范围: " + relativeOrAbsolute);
 
+        AssertNotSensitive(full);
         return full;
+    }
+
+    public static void AssertNotSensitive(string fullPath)
+    {
+        var norm = fullPath.Replace('/', '\\');
+        foreach (var frag in BlockedPathFragments)
+        {
+            if (norm.Contains(frag, StringComparison.OrdinalIgnoreCase))
+                throw new UnauthorizedAccessException("拒绝访问敏感路径: " + fullPath);
+        }
     }
 }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Threading;
+using DeepSeekBrowser.Services.Harness;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -93,7 +94,8 @@ public sealed class WebChatBridgeHost
             _pendingWebUserToken = webUserToken;
             if (_webView.CoreWebView2 is null) return;
             var esc = JsonSerializer.Serialize(webUserToken);
-            await _webView.CoreWebView2.ExecuteScriptAsync($"window.__dsWebUserToken={esc};");
+            await _webView.CoreWebView2.ExecuteScriptAsync(
+                "window.__dsAgentApiAccountOnly=true;window.__dsWebUserToken=" + esc + ";");
         });
 
     private async Task EnsureBridgeScriptInjectedAsync()
@@ -160,7 +162,8 @@ public sealed class WebChatBridgeHost
         if (string.IsNullOrWhiteSpace(_pendingWebUserToken) || _webView.CoreWebView2 is null)
             return;
         var esc = JsonSerializer.Serialize(_pendingWebUserToken);
-        await _webView.CoreWebView2.ExecuteScriptAsync($"window.__dsWebUserToken={esc};");
+        await _webView.CoreWebView2.ExecuteScriptAsync(
+            "window.__dsAgentApiAccountOnly=true;window.__dsWebUserToken=" + esc + ";");
     }
 
     public Task EnsureReadyAsync(CancellationToken ct = default) =>
@@ -300,7 +303,7 @@ public sealed class WebChatBridgeHost
             {
                 thinking,
                 search,
-                modelType = "expert",
+                modelType = WebChatBridgeModelTypes.Resolve(model),
                 refFileIds = refFileIds.ToArray(),
                 chatSessionId = webChatSessionId,
                 suppressToolCalls = DsdAgentApiScope.HasActiveAgentRun && !allowToolCalls
@@ -374,7 +377,7 @@ public sealed class WebChatBridgeHost
         {
             thinking,
             search,
-            modelType = "expert",
+            modelType = WebChatBridgeModelTypes.Resolve(model),
             refFileIds = refFileIds.ToArray(),
             chatSessionId = webChatSessionId,
             suppressToolCalls = DsdAgentApiScope.HasActiveAgentRun && !allowToolCalls
@@ -427,13 +430,28 @@ public sealed class WebChatBridgeHost
             {
                 if (!hub.IsScriptCompleted)
                 {
-                    await hub.WaitForScriptCompletedAsync(TimeSpan.FromMinutes(2), CancellationToken.None)
-                        .ConfigureAwait(false);
+                    if (ct.IsCancellationRequested)
+                    {
+                        await TryAbortWebStreamAsync(hub.StreamId).ConfigureAwait(false);
+                        hub.PushError("已取消");
+                    }
+                    else
+                    {
+                        var wait = ct.IsCancellationRequested ? TimeSpan.FromSeconds(8) : TimeSpan.FromMinutes(2);
+                        await hub.WaitForScriptCompletedAsync(wait, ct).ConfigureAwait(false);
+                    }
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                hub.PushError("已取消");
             }
             catch (TimeoutException)
             {
-                hub.PushError("网页 Chat 流超时：请确认已在「普通对话」登录 DeepSeek 后重试。");
+                if (ct.IsCancellationRequested)
+                    hub.PushError("已取消");
+                else
+                    hub.PushError("网页 Chat 流超时：请确认已在「普通对话」登录 DeepSeek 后重试。");
             }
             catch
             {
@@ -443,6 +461,42 @@ public sealed class WebChatBridgeHost
             _streamHubs.TryRemove(hub.StreamId, out _);
             hub.Dispose();
         }
+    }
+
+    /// <summary>用户点击停止时立即中断网页 Chat 流，避免 finally 等待 2 分钟。</summary>
+    public void CancelAllActiveStreams()
+    {
+        foreach (var (streamId, hub) in _streamHubs.ToArray())
+        {
+            hub.PushError("已取消");
+            _ = TryAbortWebStreamAsync(streamId);
+        }
+    }
+
+    private Task TryAbortWebStreamAsync(string streamId)
+    {
+        if (string.IsNullOrWhiteSpace(streamId))
+            return Task.CompletedTask;
+
+        var sidJson = JsonSerializer.Serialize(streamId);
+        var script =
+            "(function(){try{"
+            + "var fn=window.dsDesktopBridge&&window.dsDesktopBridge.abortWebChatStream;"
+            + "return fn?JSON.stringify({ok:!!fn.call(window.dsDesktopBridge," + sidJson + ")}):'{\"ok\":false}';"
+            + "}catch(e){return JSON.stringify({ok:false});}})()";
+
+        return RunOnUiAsync(async () =>
+        {
+            try
+            {
+                await EnsureBridgeScriptInjectedAsync();
+                await ExecuteBridgeScriptRawAsync(script);
+            }
+            catch
+            {
+                // ignore abort failures
+            }
+        });
     }
 
     private static async Task MonitorStreamStallAsync(WebChatStreamHub hub, CancellationToken ct)

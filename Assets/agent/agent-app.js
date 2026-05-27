@@ -22,13 +22,14 @@
     activeSessionId: null,
     currentRun: null,
     files: [],
+    pathRefs: [],
     strategy: "execute",
     storageBytes: 0,
     storageCount: 0,
     selectMode: false,
     selectedIds: new Set(),
-    deepThink: false,
-    smartSearch: false,
+    deepThink: true,
+    smartSearch: true,
     modelAuto: true,
     model: "deepseek-v4-pro",
     providerId: "deepseek",
@@ -122,6 +123,9 @@
           msg.type === "agentCheckpoint" ||
           msg.type === "agentSkills" ||
           msg.type === "agentWorkspaceFiles" ||
+          msg.type === "agentPathRefs" ||
+          msg.type === "agentPathPicker" ||
+          msg.type === "agentPickFolder" ||
           msg.type === "agentHarnessReload" ||
             msg.type === "agentWorkspace" ||
             msg.type === "agentAutomation" ||
@@ -539,11 +543,17 @@
 
   function streamAssistantAnswer(el, chunk, append) {
     if (!el) return;
+    if (state.currentRun?.hasThinking && chunk) {
+      collapseThinkBlock(state.currentRun);
+    }
     el._dsStreamText = append ? (el._dsStreamText || "") + (chunk || "") : chunk || "";
+    const display = window.DsMessageRender?.prepareAnswerForDisplay
+      ? window.DsMessageRender.prepareAnswerForDisplay(el._dsStreamText)
+      : el._dsStreamText;
     if (window.DsMessageRender) {
-      window.DsMessageRender.scheduleApply(el, el._dsStreamText, append ? 150 : 0);
+      window.DsMessageRender.scheduleApply(el, display, append ? 60 : 0);
     } else {
-      el.textContent = el._dsStreamText;
+      el.textContent = display;
     }
   }
 
@@ -597,10 +607,115 @@
     }
     setSendButtonMode("send");
     const hasText = input && input.value.trim().length > 0;
-    const hasFiles = state.files.length > 0;
-    const canSend = state.loggedIn && (hasText || hasFiles);
+    const hasPaths = state.pathRefs.length > 0;
+    const canSend = state.loggedIn && (hasText || hasPaths);
     if (send) send.disabled = !canSend;
     if (input) input.disabled = false;
+  }
+
+  function setComposerDropHover(active) {
+    const composer = document.querySelector(".ds-composer");
+    const overlay = $("composer-drop-overlay");
+    if (composer) composer.classList.toggle("ds-composer-dragover", !!active);
+    if (overlay) {
+      overlay.hidden = !active;
+      overlay.setAttribute("aria-hidden", active ? "false" : "true");
+    }
+  }
+
+  function renderPathChips() {
+    const box = $("path-chips");
+    if (!box) return;
+    if (!state.pathRefs.length) {
+      box.hidden = true;
+      box.innerHTML = "";
+      return;
+    }
+    box.hidden = false;
+    box.innerHTML = "";
+    state.pathRefs.forEach((ref, idx) => {
+      const chip = document.createElement("span");
+      chip.className = "ds-path-chip";
+      chip.title = ref.path;
+      chip.setAttribute("data-path", ref.path);
+
+      const icon = document.createElement("span");
+      icon.className = "ds-path-chip-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML =
+        ref.kind === "folder"
+          ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>'
+          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+
+      const label = document.createElement("span");
+      label.className = "ds-path-chip-label";
+      label.textContent = ref.name || ref.path;
+
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "ds-path-chip-remove";
+      rm.setAttribute("aria-label", "移除路径");
+      rm.textContent = "×";
+      rm.onclick = () => {
+        state.pathRefs.splice(idx, 1);
+        renderPathChips();
+        updateComposerState();
+      };
+
+      chip.append(icon, label, rm);
+      box.appendChild(chip);
+    });
+  }
+
+  async function normalizeDroppedPaths(paths) {
+    const raw = (paths || []).filter(Boolean).map(String);
+    if (!raw.length) return [];
+    try {
+      const res = await postAsync("agentNormalizePaths", { paths: raw });
+      if (res?.ok && Array.isArray(res.refs)) return res.refs;
+    } catch (_) {
+      /* fallback below */
+    }
+    return raw.map((p) => {
+      const trimmed = p.trim();
+      const name = trimmed.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || trimmed;
+      return { path: trimmed, name, kind: "folder" };
+    });
+  }
+
+  function addPathRefs(refs) {
+    if (!refs?.length) return;
+    const seen = new Set(state.pathRefs.map((r) => r.path.toLowerCase()));
+    refs.forEach((ref) => {
+      const path = (ref.path || "").trim();
+      if (!path) return;
+      const key = path.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      state.pathRefs.push({
+        path,
+        name: ref.name || path.split(/[\\/]/).pop() || path,
+        kind: ref.kind === "file" ? "file" : "folder",
+      });
+    });
+    renderPathChips();
+    updateComposerState();
+    $("chat-input")?.focus();
+  }
+
+  async function ingestDroppedPaths(paths) {
+    const refs = await normalizeDroppedPaths(paths);
+    addPathRefs(refs);
+  }
+
+  function composeOutgoingText(rawText) {
+    const lines = [];
+    state.pathRefs.forEach((ref) => {
+      lines.push("@" + ref.path);
+    });
+    const text = (rawText || "").trim();
+    if (text) lines.push(text);
+    return lines.join("\n");
   }
 
   function renderFileChips() {
@@ -632,22 +747,53 @@
     });
   }
 
-  async function handleFiles(fileList) {
+  async function ingestFilesAsPathRefs(fileList) {
     if (!fileList?.length) return;
-    if (!window.dsDesktopBridge?.uploadUserFile) {
-      alert("文件上传不可用，请重启应用后重试。");
+    const paths = [];
+    for (const file of fileList) {
+      if (file?.path) paths.push(String(file.path));
+    }
+    if (paths.length) {
+      await ingestDroppedPaths(paths);
       return;
     }
-    for (const file of fileList) {
-      try {
-        const id = await window.dsDesktopBridge.uploadUserFile(file);
-        state.files.push({ id, name: file.name });
-      } catch (e) {
-        alert("上传失败: " + (e.message || e));
+    // WebView2 内拖放拿不到 file.path；由主窗口 WM_DROPFILES 注入 agentDroppedPaths。
+  }
+
+  function installBridgePathRefOnly() {
+    const bridge = window.dsDesktopBridge;
+    if (!bridge || bridge.__dsPathRefOnly) return;
+    bridge.__dsPathRefOnly = true;
+    bridge.uploadUserFile = async function (file) {
+      if (file?.path) {
+        await ingestDroppedPaths([String(file.path)]);
+        return "";
       }
+      return "";
+    };
+  }
+
+  window.__dsAgentIngestPaths = async function (paths) {
+    await ingestDroppedPaths(paths || []);
+  };
+
+  async function pickPathReferences(options) {
+    const kind = options?.kind || "file";
+    try {
+      const res = await postAsync("agentPickReferences", { kind });
+      if (res?.ok && Array.isArray(res.refs) && res.refs.length) {
+        addPathRefs(res.refs);
+      } else if (res?.ok && res.entry?.path) {
+        addPathRefs([res.entry]);
+      }
+    } catch (_) {
+      /* user cancelled */
     }
-    renderFileChips();
-    updateComposerState();
+    $("chat-input")?.focus();
+  }
+
+  async function handleFiles(fileList) {
+    await ingestFilesAsPathRefs(fileList);
   }
 
   let loginPollTimer = null;
@@ -854,8 +1000,8 @@
 
   function applyAgentActivity(run, activity) {
     if (!run || !activity?.verb) return;
-    if (/^(Read|Grepped|Listed|Searched|Ran|Edited|Fetched)/i.test(activity.verb)) {
-      setThinkPhase(run, "exploring");
+    if (/^(Read|Grepped|Listed|Searched|Ran|Edited|Fetched|Running)/i.test(activity.verb)) {
+      setThinkPhase(run, activity.verb === "Running" ? "execute" : "exploring");
     }
     pushThinkRecord(run, renderActivityLine(run, activity));
     updateThinkTitle(run);
@@ -880,6 +1026,12 @@
     return t;
   }
 
+  function collapseThinkBlock(run) {
+    if (!run?.thinkHeader) return;
+    run.thinkHeader.setAttribute("aria-expanded", "false");
+    run.thinkEl?.classList.add("ds-collapsed");
+  }
+
   function applyAgentThinking(run, text, append) {
     if (!run || !text) return;
     const cleaned = sanitizeHarnessEcho(text);
@@ -887,6 +1039,8 @@
     run.hasThinking = true;
     setThinkPhase(run, "thinking");
     if (run.thinkingWrap) run.thinkingWrap.hidden = false;
+    if (run.thinkHeader) run.thinkHeader.setAttribute("aria-expanded", "true");
+    run.thinkEl?.classList.remove("ds-collapsed");
     if (run.proseEl) {
       run.proseEl.textContent = append ? (run.proseEl.textContent || "") + cleaned : cleaned;
     }
@@ -973,6 +1127,7 @@
 
     const panel = {
       thinkEl: think,
+      thinkHeader: header,
       phaseEl: phase,
       subtitleEl: subtitle,
       activitiesEl: activities,
@@ -1184,21 +1339,66 @@
     bubble.className = "ds-msg-bubble";
 
     const think = createThinkBlock();
+    const previews = document.createElement("div");
+    previews.className = "ds-file-previews";
     const answer = document.createElement("div");
     answer.className = "ds-msg-answer";
     answer._dsStreamText = "";
 
-    bubble.append(think.thinkEl, answer);
+    bubble.append(think.thinkEl, previews, answer);
     row.appendChild(bubble);
     wrap.appendChild(row);
     scrollToBottom();
 
-    return { row, bubble, answerEl: answer, ...think };
+    return { row, bubble, previewsEl: previews, answerEl: answer, ...think };
+  }
+
+  function appendFilePreview(run, preview) {
+    if (!run?.previewsEl || !preview?.content) return;
+    const path = preview.path || "file";
+    const lang = preview.lang || "text";
+    const key = path + "\0" + lang;
+    if (!run._filePreviewKeys) run._filePreviewKeys = new Set();
+    if (run._filePreviewKeys.has(key)) {
+      const existing = run.previewsEl.querySelector('[data-ds-file-path="' + CSS.escape(path) + '"]');
+      if (existing && window.DsMessageRender?.updateFilePreview) {
+        window.DsMessageRender.updateFilePreview(existing, preview);
+        scrollToBottom();
+        return;
+      }
+    }
+    run._filePreviewKeys.add(key);
+    const slot = document.createElement("div");
+    slot.className = "ds-file-preview-slot";
+    slot.dataset.dsFilePath = path;
+    run.previewsEl.appendChild(slot);
+    if (window.DsMessageRender?.mountFilePreview) {
+      window.DsMessageRender.mountFilePreview(slot, preview).catch(() => {});
+    }
+    scrollToBottom();
+  }
+
+  function appendPendingPatch(run, patch) {
+    if (!run?.previewsEl || !patch?.patchId) return;
+    const slot = document.createElement("div");
+    slot.className = "ds-patch-slot";
+    run.previewsEl.appendChild(slot);
+    if (window.DsDiffHost?.buildPatchCard) {
+      const card = window.DsDiffHost.buildPatchCard(patch, (patchId, accepted) => {
+        post("agentPatchResolve", { patchId, accepted });
+      });
+      slot.appendChild(card);
+    } else {
+      slot.textContent = "Patch " + patch.path + " (diff UI unavailable)";
+    }
+    scrollToBottom();
   }
 
   function prepareEmptyChat() {
     state.files = [];
+    state.pathRefs = [];
     renderFileChips();
+    renderPathChips();
     const now = Date.now();
     state.activeSessionId = uid();
     state.activeSession = {
@@ -1363,7 +1563,7 @@
       "/reload  热重载 Playbook / Skill 缓存\n" +
       "/react、/plan  兼容旧命令\n" +
       "/chat   返回普通对话\n\n" +
-      "推理：本地 API 管理（须先在网页登录）\n" +
+      "推理：须在 API 管理中添加 DeepSeek 账户（与普通对话登录无关）\n" +
       "互操作：MCP（含 ~/.cursor/mcp.json）· SKILL.md · OpenAI tools schema"
     );
   }
@@ -1814,6 +2014,7 @@
       closeSlashPalette();
       return;
     }
+    closeAtPalette();
     slashPalette.open = true;
     slashPalette.query = ctx.query;
     slashPalette.range = { start: ctx.start, end: ctx.end };
@@ -1823,6 +2024,7 @@
   }
 
   function slashPaletteHandleKeydown(e) {
+    if (atPalette.open) return false;
     if (!slashPalette.open) return false;
     const input = $("chat-input");
     if (e.key === "Escape") {
@@ -1858,6 +2060,301 @@
       e.preventDefault();
       const item = slashPalette.flat[slashPalette.selected];
       if (item) applySlashItem(item);
+      return true;
+    }
+    return false;
+  }
+
+  const AT_ICONS = {
+    folder:
+      '<svg class="ds-slash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
+    file:
+      '<svg class="ds-slash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+    browse:
+      '<svg class="ds-slash-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>',
+  };
+
+  const atPalette = {
+    open: false,
+    query: "",
+    range: null,
+    selected: 0,
+    flat: [],
+    loading: false,
+    fetchTimer: null,
+    requestId: 0,
+  };
+
+  function getAtContext(input) {
+    if (!input) return null;
+    const value = input.value;
+    const pos = input.selectionStart ?? value.length;
+    const before = value.slice(0, pos);
+    const m = before.match(/(?:^|\s)@([^\s@]*)$/);
+    if (!m) return null;
+    const token = m[1];
+    const start = before.length - token.length - 1;
+    return { query: token, start, end: pos };
+  }
+
+  function buildAtFlatItems() {
+    const flat = [];
+    flat.push({
+      id: "at-browse",
+      section: "操作",
+      kind: "browse",
+      label: "浏览文件夹…",
+      desc: "从本机选择任意目录",
+      action: { type: "browse" },
+    });
+
+    const q = (atPalette.query || "").toLowerCase();
+    const matchLocal = (path, name) => {
+      if (!q) return true;
+      return (path || "").toLowerCase().includes(q) || (name || "").toLowerCase().includes(q);
+    };
+
+    const localSections = [
+      { key: "current", title: "工作区", path: workspaceUi.currentPath, name: workspaceUi.currentName },
+    ];
+    (workspaceUi.recents || []).forEach((r) => {
+      if (!r?.path) return;
+      localSections.push({ key: "recent", title: "最近", path: r.path, name: r.name });
+    });
+    if (workspaceUi.homePath) {
+      localSections.push({ key: "home", title: "最近", path: workspaceUi.homePath, name: "Home" });
+    }
+
+    const seen = new Set();
+    localSections.forEach((item) => {
+      if (!item.path || seen.has(item.path.toLowerCase())) return;
+      if (!matchLocal(item.path, item.name)) return;
+      seen.add(item.path.toLowerCase());
+      flat.push({
+        id: "local-" + item.path,
+        section: item.title,
+        kind: "folder",
+        label: item.name || item.path,
+        path: item.path,
+        desc: truncatePath(item.path, 56),
+        ref: { path: item.path, name: item.name || item.path, kind: "folder" },
+      });
+    });
+
+    (atPalette.entries || []).forEach((e, i) => {
+      const path = e.path || "";
+      if (!path || seen.has(path.toLowerCase())) return;
+      seen.add(path.toLowerCase());
+      flat.push({
+        id: "srv-" + i + "-" + path,
+        section: e.section || (e.kind === "file" ? "文件" : "文件夹"),
+        kind: e.kind === "file" ? "file" : "folder",
+        label: e.name || path,
+        path,
+        desc: truncatePath(path, 56),
+        ref: { path, name: e.name || path, kind: e.kind === "file" ? "file" : "folder" },
+      });
+    });
+
+    return flat;
+  }
+
+  function renderAtPalette() {
+    const root = $("at-palette");
+    if (!root) return;
+    atPalette.flat = buildAtFlatItems();
+    if (!atPalette.open) {
+      root.hidden = true;
+      return;
+    }
+    root.hidden = false;
+    root.replaceChildren();
+
+    if (!atPalette.flat.length && !atPalette.loading) {
+      const empty = document.createElement("div");
+      empty.className = "ds-slash-empty";
+      empty.textContent = "没有匹配的路径";
+      root.appendChild(empty);
+      return;
+    }
+
+    let lastSection = "";
+    atPalette.flat.forEach((item, idx) => {
+      if (item.section && item.section !== lastSection) {
+        lastSection = item.section;
+        const head = document.createElement("div");
+        head.className = "ds-slash-heading";
+        head.textContent = item.section;
+        root.appendChild(head);
+      }
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ds-slash-item" + (idx === atPalette.selected ? " is-active" : "");
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-selected", idx === atPalette.selected ? "true" : "false");
+      btn.innerHTML =
+        (AT_ICONS[item.kind] || AT_ICONS.folder) +
+        '<span class="ds-slash-item-body">' +
+        '<span class="ds-slash-label">' +
+        escapeHtml(item.label) +
+        "</span>" +
+        (item.desc
+          ? '<span class="ds-slash-desc ds-slash-path">' + escapeHtml(item.desc) + "</span>"
+          : "") +
+        "</span>";
+      btn.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        applyAtItem(item);
+      });
+      root.appendChild(btn);
+    });
+
+    if (atPalette.loading) {
+      const loading = document.createElement("div");
+      loading.className = "ds-slash-empty";
+      loading.textContent = "正在搜索路径…";
+      root.appendChild(loading);
+    }
+
+    root.querySelector(".ds-slash-item.is-active")?.scrollIntoView({ block: "nearest" });
+  }
+
+  function closeAtPalette() {
+    atPalette.open = false;
+    atPalette.query = "";
+    atPalette.range = null;
+    atPalette.selected = 0;
+    atPalette.entries = [];
+    atPalette.loading = false;
+    if (atPalette.fetchTimer) {
+      clearTimeout(atPalette.fetchTimer);
+      atPalette.fetchTimer = null;
+    }
+    const root = $("at-palette");
+    if (root) root.hidden = true;
+  }
+
+  function replaceAtToken(input) {
+    if (!input || !atPalette.range) return;
+    const value = input.value;
+    const before = value.slice(0, atPalette.range.start);
+    const after = value.slice(atPalette.range.end);
+    input.value = (before + after).replace(/\s{2,}/g, " ");
+    const pos = before.length;
+    input.setSelectionRange(pos, pos);
+  }
+
+  async function applyAtItem(item) {
+    const input = $("chat-input");
+    if (!input) return;
+
+    if (item.action?.type === "browse") {
+      closeAtPalette();
+      replaceAtToken(input);
+      try {
+        const res = await postAsync("agentPickFolder", {});
+        if (res?.ok && res.entry?.path) {
+          addPathRefs([res.entry]);
+        }
+      } catch (_) {
+        /* user cancelled */
+      }
+      input.focus();
+      return;
+    }
+
+    if (item.ref?.path) {
+      replaceAtToken(input);
+      addPathRefs([item.ref]);
+      closeAtPalette();
+      resizeInput();
+      updateComposerState();
+      input.focus();
+    }
+  }
+
+  function scheduleAtPathFetch() {
+    if (atPalette.fetchTimer) clearTimeout(atPalette.fetchTimer);
+    atPalette.fetchTimer = setTimeout(() => fetchAtPathEntries(), 180);
+  }
+
+  async function fetchAtPathEntries() {
+    const req = ++atPalette.requestId;
+    atPalette.loading = true;
+    renderAtPalette();
+    try {
+      const res = await postAsync("agentPathPicker", {
+        query: atPalette.query || "",
+        limit: 48,
+      });
+      if (req !== atPalette.requestId || !atPalette.open) return;
+      atPalette.entries = res?.ok && Array.isArray(res.entries) ? res.entries : [];
+    } catch (_) {
+      if (req !== atPalette.requestId) return;
+      atPalette.entries = [];
+    } finally {
+      if (req !== atPalette.requestId) return;
+      atPalette.loading = false;
+      renderAtPalette();
+    }
+  }
+
+  function onAtInput() {
+    const input = $("chat-input");
+    const ctx = getAtContext(input);
+    if (!ctx) {
+      closeAtPalette();
+      return;
+    }
+    closeSlashPalette();
+    atPalette.open = true;
+    atPalette.query = ctx.query;
+    atPalette.range = { start: ctx.start, end: ctx.end };
+    atPalette.selected = 0;
+    renderAtPalette();
+    scheduleAtPathFetch();
+  }
+
+  function onComposerInput() {
+    onAtInput();
+    onSlashInput();
+  }
+
+  function atPaletteHandleKeydown(e) {
+    if (!atPalette.open) return false;
+    const input = $("chat-input");
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAtPalette();
+      return true;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (atPalette.flat.length) {
+        atPalette.selected = (atPalette.selected + 1) % atPalette.flat.length;
+        renderAtPalette();
+      }
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (atPalette.flat.length) {
+        atPalette.selected = (atPalette.selected - 1 + atPalette.flat.length) % atPalette.flat.length;
+        renderAtPalette();
+      }
+      return true;
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      const item = atPalette.flat[atPalette.selected];
+      if (item) applyAtItem(item);
+      else closeAtPalette();
+      return true;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const item = atPalette.flat[atPalette.selected];
+      if (item) applyAtItem(item);
       return true;
     }
     return false;
@@ -2000,18 +2497,21 @@
 
   async function dispatchRun() {
     const input = $("chat-input");
-    const text = (input?.value || "").trim();
-    if (!text || state.running || !state.loggedIn) return;
+    const rawText = (input?.value || "").trim();
+    if ((!rawText && !state.pathRefs.length) || state.running || !state.loggedIn) return;
 
-    if (await handleSlashCommand(text)) {
+    if (await handleSlashCommand(rawText)) {
       input.value = "";
       resizeInput();
       return;
     }
 
+    const text = composeOutgoingText(rawText);
+
     const session = ensureSession();
     if (session && session.title === "新对话") {
-      session.title = text.slice(0, 32) + (text.length > 32 ? "…" : "");
+      session.title = (rawText || state.pathRefs[0]?.name || "新对话").slice(0, 32) +
+        ((rawText || state.pathRefs[0]?.name || "").length > 32 ? "…" : "");
       renderSessions();
     }
 
@@ -2027,16 +2527,17 @@
     updateComposerState();
     requestAnimationFrame(() => updateComposerState());
     input.value = "";
+    state.pathRefs = [];
+    renderPathChips();
     resizeInput();
 
-    const refFileIds = state.files.map((f) => f.id);
     state.files = [];
     renderFileChips();
 
     post("setWorkMode", { mode: "agent" });
     state.stopping = false;
     post("agentRun", {
-      text: text || (refFileIds.length ? "请阅读附件并完成任务。" : text),
+      text: text || "请根据引用的路径完成任务。",
       mode: "专家",
       strategy: state.strategy,
       deepThink: !!state.deepThink,
@@ -2045,8 +2546,9 @@
       model: state.model,
       providerId: state.providerId,
       mcpOn: true,
-      refFileIds,
+      refFileIds: [],
       sessionId: state.activeSessionId,
+      webChatSessionId: state.activeSession?.webChatSessionId || null,
       harnessState:
         state.activeSession?.harnessState || state.activeSession?.tuiThreadId || null,
       tuiThreadId:
@@ -2070,10 +2572,18 @@
     if (state.currentRun?.phaseEl) {
       state.currentRun.phaseEl.textContent = "Stopping";
     }
+    if (state.stopAckTimer) clearTimeout(state.stopAckTimer);
+    state.stopAckTimer = setTimeout(() => {
+      if (state.stopping) finishRun("已停止", state.currentRun?.answerEl?._dsStreamText || "");
+    }, 8000);
     post("agentStop", {});
   }
 
   function finishRun(summary, answer) {
+    if (state.stopAckTimer) {
+      clearTimeout(state.stopAckTimer);
+      state.stopAckTimer = null;
+    }
     state.running = false;
     state.stopping = false;
     syncAllUserMessageActions();
@@ -2183,6 +2693,25 @@
       renderContextBar();
     }
 
+    if (msg.type === "agentDragHover") {
+      setComposerDropHover(!!msg.active);
+      return;
+    }
+
+    if (msg.type === "agentDroppedPaths" && Array.isArray(msg.paths)) {
+      setComposerDropHover(false);
+      ingestDroppedPaths(msg.paths)
+        .then(() => {
+          const composer = document.querySelector(".ds-composer");
+          if (composer) {
+            composer.classList.add("ds-composer-drop-ok");
+            setTimeout(() => composer.classList.remove("ds-composer-drop-ok"), 600);
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+
     if (msg.type === "agentWorkspaceState" && msg.workspace) {
       applyWorkspace(msg.workspace);
     }
@@ -2199,6 +2728,49 @@
       });
     }
 
+    if (msg.type === "agentFilePreview" && msg.content) {
+      if (state.currentRun && !state.running) {
+        state.running = true;
+        updateComposerState();
+      }
+      appendFilePreview(state.currentRun, {
+        path: msg.path || "file",
+        lang: msg.lang || msg.language || "text",
+        content: msg.content,
+        complete: msg.complete !== false,
+      });
+    }
+
+    if (msg.type === "agentPendingPatch" && msg.patchId) {
+      if (state.currentRun && !state.running) {
+        state.running = true;
+        updateComposerState();
+      }
+      appendPendingPatch(state.currentRun, {
+        patchId: msg.patchId,
+        path: msg.path || "file",
+        language: msg.lang || msg.language || "plaintext",
+        originalContent: msg.originalContent || "",
+        patchedContent: msg.patchedContent || "",
+      });
+    }
+
+    if (msg.type === "agentShellOutput" && msg.text && global.DsTerminalPanel) {
+      global.DsTerminalPanel.show();
+      global.DsTerminalPanel.writeln(msg.text);
+    }
+
+    if (msg.type === "agentShellEvent" && global.DsTerminalPanel) {
+      global.DsTerminalPanel.onShellEvent({
+        command: msg.command,
+        chunk: msg.chunk,
+        started: !!msg.started,
+        completed: !!msg.completed,
+        exitCode: msg.exitCode,
+        timedOut: !!msg.timedOut,
+      });
+    }
+
     if (msg.type === "agentThinking" && msg.text) {
       if (state.currentRun) applyAgentThinking(state.currentRun, msg.text, !!msg.append);
     }
@@ -2207,6 +2779,14 @@
       if (state.currentRun && !state.running) {
         state.running = true;
         updateComposerState();
+      }
+      if (state.currentRun && /正在请求模型|正在分析任务意图|正在准备对话/.test(msg.text)) {
+        setThinkPhase(state.currentRun, "thinking");
+        if (state.currentRun.subtitleEl) {
+          state.currentRun.subtitleEl.textContent = msg.text.replace(/^第\s*\d+\s*轮：/, "").trim();
+          state.currentRun.subtitleEl.hidden = false;
+        }
+        updateThinkTitle(state.currentRun);
       }
       appendLogLine(msg.text);
     }
@@ -2251,6 +2831,17 @@
 
     if (msg.type === "agentDone") {
       if (state.currentRun?._waitTimer) clearTimeout(state.currentRun._waitTimer);
+      if (msg.metrics && state.currentRun?.subtitleEl) {
+        const m = msg.metrics;
+        const sec = m.durationMs ? (m.durationMs / 1000).toFixed(1) + "s" : "";
+        const tok =
+          m.promptTokens || m.completionTokens
+            ? " · " + (m.promptTokens + m.completionTokens) + " tokens"
+            : "";
+        const tools = m.toolCalls ? " · " + m.toolCalls + " tools" : "";
+        state.currentRun.subtitleEl.textContent = (sec + tok + tools).trim() || "完成";
+        state.currentRun.subtitleEl.hidden = false;
+      }
       finishRun(msg.summary, msg.answer);
     }
   };
@@ -2641,22 +3232,29 @@
 
     const fileInput = $("file-input");
     const attachBtn = $("btn-attach");
-    attachBtn?.addEventListener("click", () => fileInput?.click());
-    fileInput?.addEventListener("change", () => {
-      if (fileInput.files?.length) handleFiles([...fileInput.files]);
-      fileInput.value = "";
+    attachBtn?.addEventListener("click", () => pickPathReferences({ kind: "file" }));
+    attachBtn?.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      pickPathReferences({ kind: "folder" });
     });
+    fileInput?.remove();
+
+    bindComposerDragDrop();
 
     const input = $("chat-input");
     input?.addEventListener("input", () => {
-      onSlashInput();
+      onComposerInput();
       resizeInput();
       updateComposerState();
     });
     input?.addEventListener("blur", () => {
-      setTimeout(() => closeSlashPalette(), 120);
+      setTimeout(() => {
+        closeSlashPalette();
+        closeAtPalette();
+      }, 120);
     });
     input?.addEventListener("keydown", (e) => {
+      if (atPaletteHandleKeydown(e)) return;
       if (slashPaletteHandleKeydown(e)) return;
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
@@ -2678,6 +3276,107 @@
       setSelectMode(false);
       await startNewChat();
     });
+  }
+
+  function bindPageDragDrop() {
+    const onDragOver = (e) => {
+      if (!hasFileDrag(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      setComposerDropHover(true);
+    };
+    const onDrop = (e) => {
+      if (!hasFileDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setComposerDropHover(false);
+      const paths = extractDropPaths(e.dataTransfer);
+      if (paths.length) {
+        ingestDroppedPaths(paths).catch(() => {});
+        return;
+      }
+      // WebView2 内通常无 file.path；等待宿主 WM_DROPFILES / WPF Drop → agentDroppedPaths。
+    };
+    document.addEventListener("dragover", onDragOver, true);
+    document.addEventListener("drop", onDrop, true);
+  }
+
+  function bindComposerDragDrop() {
+    const composer = document.querySelector(".ds-composer");
+    const outer = $("composer-input") || composer;
+    if (!composer || !outer) return;
+
+    let dragDepth = 0;
+    const setDrag = (on) => {
+      composer.classList.toggle("ds-composer-dragover", on);
+    };
+
+    const onDragEnter = (e) => {
+      if (!hasFileDrag(e)) return;
+      e.preventDefault();
+      dragDepth += 1;
+      setDrag(true);
+      setComposerDropHover(true);
+    };
+    const onDragLeave = (e) => {
+      if (!hasFileDrag(e)) return;
+      e.preventDefault();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) {
+        setDrag(false);
+        setComposerDropHover(false);
+      }
+    };
+    const onDragOver = (e) => {
+      if (!hasFileDrag(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      setDrag(true);
+      setComposerDropHover(true);
+    };
+    const onDrop = (e) => {
+      if (!hasFileDrag(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      setDrag(false);
+      setComposerDropHover(false);
+      const paths = extractDropPaths(e.dataTransfer);
+      if (paths.length) ingestDroppedPaths(paths).catch(() => {});
+    };
+
+    [composer, outer].forEach((el) => {
+      el.addEventListener("dragenter", onDragEnter);
+      el.addEventListener("dragleave", onDragLeave);
+      el.addEventListener("dragover", onDragOver);
+      el.addEventListener("drop", onDrop);
+    });
+  }
+
+  function hasFileDrag(e) {
+    const types = [...(e.dataTransfer?.types || [])];
+    return types.includes("Files") || types.includes("application/x-moz-file");
+  }
+
+  function extractDropPaths(dataTransfer) {
+    const paths = [];
+    if (!dataTransfer) return paths;
+
+    if (dataTransfer.files?.length) {
+      [...dataTransfer.files].forEach((file) => {
+        if (file.path) paths.push(String(file.path));
+      });
+    }
+
+    const plain = dataTransfer.getData("text/plain") || dataTransfer.getData("Text");
+    if (plain) {
+      plain
+        .split(/\r?\n/)
+        .map((s) => s.trim().replace(/^"(.*)"$/, "$1"))
+        .filter((s) => /^([A-Za-z]:\\|\\\\|\/)/.test(s))
+        .forEach((p) => paths.push(p));
+    }
+
+    return [...new Set(paths)];
   }
 
   async function bootstrapStorage() {
@@ -2750,6 +3449,15 @@
       state.providerId = ws.agentManualProviderId;
     renderWorkspaceSidebar();
     renderContextBar();
+    postAsync("agentIndexStatus", {})
+      .then((msg) => {
+        if (msg && msg.ok) {
+          workspaceUi.indexChunks = msg.chunkCount || 0;
+          workspaceUi.indexUpdated = msg.lastUpdatedUtc || "";
+          renderContextBar();
+        }
+      })
+      .catch(() => {});
   }
 
   function providerDisplayName(id) {
@@ -2890,7 +3598,13 @@
         : providerDisplayName(state.providerId) + " · " + state.model;
     }
     const wChip = $("ctx-workspace");
-    if (wChip) wChip.title = workspaceUi.currentPath || "";
+    if (wChip) {
+      wChip.title = workspaceUi.currentPath || "";
+      if (workspaceUi.indexChunks > 0) {
+        wChip.title += "\n索引: " + workspaceUi.indexChunks + " chunks";
+        if (workspaceUi.indexUpdated) wChip.title += " · " + workspaceUi.indexUpdated;
+      }
+    }
   }
 
   function ensureCtxMenuPortals() {
@@ -3193,10 +3907,12 @@
   }
 
   async function init() {
+    installBridgePathRefOnly();
     bindUi();
     initWorkspaceUi();
     resizeInput();
     bindWorkModeClient();
+    bindPageDragDrop();
 
     const banner = $("login-banner");
     if (banner) {
@@ -3232,6 +3948,8 @@
       if (document.visibilityState === "visible" && !state.authResolved) pollLogin();
     });
   }
+
+  installBridgePathRefOnly();
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => init());

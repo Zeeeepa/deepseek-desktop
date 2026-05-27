@@ -51,6 +51,8 @@ public sealed class DesktopWebHost : IDesktopWebHost
         Agent.AttachApiBridge(bridge);
     }
 
+    public void CancelActiveWebChatStreams() => Chat.CancelActiveWebChatStreams();
+
     public void InitializeInjectScheduler(Dispatcher dispatcher)
     {
         _injectScheduler = new InjectScheduler(
@@ -66,8 +68,12 @@ public sealed class DesktopWebHost : IDesktopWebHost
 
     public async Task InitializeAsync(CoreWebView2Environment env, string? startWorkMode)
     {
+        _agentView.AllowExternalDrop = false;
+
         await _chatView.EnsureCoreWebView2Async(env);
         await _agentView.EnsureCoreWebView2Async(env);
+
+        _agentView.AllowExternalDrop = false;
 
         var chatCore = _chatView.CoreWebView2!;
         var agentCore = _agentView.CoreWebView2!;
@@ -356,6 +362,50 @@ public sealed class DesktopWebHost : IDesktopWebHost
         }
 
         dispatcher.Invoke(action, DispatcherPriority.Send);
+    }
+
+    /// <summary>
+    /// 将文件夹拖放绑定到宿主容器（勿绑 WebView2 本身，否则会触发 Delegate 类型冲突导致启动失败）。
+    /// </summary>
+    public void AttachAgentDragDrop(UIElement surface)
+    {
+        if (surface == null) return;
+        surface.AllowDrop = true;
+        surface.PreviewDragOver -= OnAgentDragSurfaceOver;
+        surface.PreviewDrop -= OnAgentDragSurfaceDrop;
+        surface.PreviewDragOver += OnAgentDragSurfaceOver;
+        surface.PreviewDrop += OnAgentDragSurfaceDrop;
+    }
+
+    private void OnAgentDragSurfaceOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!IsAgentVisible)
+            return;
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            return;
+        e.Effects = System.Windows.DragDropEffects.Copy;
+        e.Handled = true;
+        _ = Agent.PostToPageAsync(new { type = "agentDragHover", active = true });
+    }
+
+    private void OnAgentDragSurfaceDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        _ = Agent.PostToPageAsync(new { type = "agentDragHover", active = false });
+        if (!IsAgentVisible)
+            return;
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            return;
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] raw || raw.Length == 0)
+            return;
+        e.Handled = true;
+        var paths = raw
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim().Trim('"'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (paths.Length == 0)
+            return;
+        _ = Agent.PostToPageAsync(new { type = "agentDroppedPaths", paths });
     }
 
     private void ForwardMessage(object? sender, JsonElement e) =>

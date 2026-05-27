@@ -30,10 +30,30 @@ public static class BuiltinProviderCatalog
         new("deepseek", "DeepSeek",
             "DeepSeek 智能对话助手，支持深度思考和联网搜索",
             "userToken", "https://chat.deepseek.com/api",
-            ["deepseek-v4-pro", "deepseek-v4-pro-think", "deepseek-v4-pro-search",
-                "deepseek-chat", "deepseek-reasoner", "DeepSeek-V3.2", "DeepSeek-R1", "DeepSeek-R1-Search"],
+            [
+                "deepseek-v4-pro", "deepseek-v4-pro-think", "deepseek-v4-pro-search", "deepseek-v4-pro-think-search",
+                "deepseek-v4-flash", "deepseek-v4-flash-think", "deepseek-v4-flash-search", "deepseek-v4-flash-think-search",
+                "deepseek-chat", "deepseek-reasoner", "DeepSeek-V3.2", "DeepSeek-Search", "DeepSeek-R1", "DeepSeek-R1-Search"
+            ],
             [Cred("token", "用户 Token", "从 DeepSeek 网页版获取", "浏览器开发者工具 Application → Local Storage → userToken")],
-            LoginUrl: "https://chat.deepseek.com"),
+            LoginUrl: "https://chat.deepseek.com",
+            DefaultModelMappings: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["deepseek-v4-pro"] = "deepseek-chat",
+                ["deepseek-v4-pro-think"] = "deepseek-chat",
+                ["deepseek-v4-pro-search"] = "deepseek-chat",
+                ["deepseek-v4-pro-think-search"] = "deepseek-chat",
+                ["deepseek-v4-flash"] = "deepseek-chat",
+                ["deepseek-v4-flash-think"] = "deepseek-chat",
+                ["deepseek-v4-flash-search"] = "deepseek-chat",
+                ["deepseek-v4-flash-think-search"] = "deepseek-chat",
+                ["deepseek-chat"] = "deepseek-chat",
+                ["deepseek-reasoner"] = "deepseek-chat",
+                ["DeepSeek-V3.2"] = "deepseek-chat",
+                ["DeepSeek-Search"] = "deepseek-chat",
+                ["DeepSeek-R1"] = "deepseek-chat",
+                ["DeepSeek-R1-Search"] = "deepseek-chat"
+            }),
         new("glm", "GLM",
             "智谱清言 AI 助手，支持 GLM-5 旗舰模型、深度思考和联网搜索",
             "refresh_token", "https://chatglm.cn/api",

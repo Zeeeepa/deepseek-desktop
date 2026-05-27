@@ -1,5 +1,6 @@
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
+using DeepSeekBrowser.Services.ApiManagement;
 
 namespace DeepSeek.Core.Tests;
 
@@ -41,6 +42,7 @@ public sealed class EmbeddedStackBridgeLinkerTests
     [Fact]
     public async Task LinkWebBridgeAsync_skips_without_token()
     {
+        ProviderAccountStore.Save([]);
         var bridge = new MockBridge();
         var cfg = new AppConfig { WebUserToken = "" };
         await EmbeddedStackBridgeLinker.LinkWebBridgeAsync(cfg, bridge);
@@ -50,8 +52,17 @@ public sealed class EmbeddedStackBridgeLinkerTests
     [Fact]
     public async Task LinkWebBridgeAsync_syncs_when_token_present()
     {
+        ProviderAccountStore.Save([
+            new ProviderAccountRecord
+            {
+                Id = "acc-1",
+                ProviderId = "deepseek",
+                Status = "active",
+                Credentials = new Dictionary<string, string> { ["token"] = "tok" }
+            }
+        ]);
         var bridge = new MockBridge();
-        var cfg = new AppConfig { WebUserToken = "tok" };
+        var cfg = new AppConfig();
         await EmbeddedStackBridgeLinker.LinkWebBridgeAsync(cfg, bridge);
         Assert.Equal(1, bridge.SyncCalls);
         Assert.Equal(1, bridge.ReadyCalls);

@@ -9,8 +9,9 @@
   <link rel="stylesheet" href="agent.css" />
   <link rel="stylesheet" href="webengine-composer.css" />
   <link rel="stylesheet" href="message-render.css" />
+  <link rel="stylesheet" href="monaco/vs/editor/editor.main.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" crossorigin="anonymous" />
 </head>
 <body>
   <div class="ds-app">
@@ -125,17 +126,23 @@
             <span id="mode-float-label">Agent</span>
           </button>
           <div class="ds-slash-palette" id="slash-palette" hidden role="listbox" aria-label="命令与工具"></div>
+          <div class="ds-slash-palette ds-at-palette" id="at-palette" hidden role="listbox" aria-label="路径引用"></div>
           <div class="ds-composer">
+            <div class="ds-drop-overlay" id="composer-drop-overlay" hidden aria-hidden="true">
+              <span class="ds-drop-overlay-text">拖放文件夹到此处 · 引用 @路径（不上传）</span>
+            </div>
             <div class="ds-file-chips" id="file-chips" hidden></div>
-            <textarea
-              id="chat-input"
-              rows="1"
-              placeholder="给 DeepSeek 发送消息 · /help · @文件路径"
-            ></textarea>
+            <div class="ds-composer-input" id="composer-input">
+              <div class="ds-path-chips" id="path-chips" hidden aria-label="路径引用"></div>
+              <textarea
+                id="chat-input"
+                rows="1"
+                placeholder="给 DeepSeek 发送消息 · /help · 拖入文件夹或 @路径"
+              ></textarea>
+            </div>
             <div class="ds-composer-bar">
               <div class="ds-composer-tools">
-                <input type="file" id="file-input" class="ds-file-input" multiple accept=".txt,.md,.json,.csv,.log,.py,.js,.ts,.cs,.html,.xml,.yaml,.yml,.pdf,text/*" />
-                <button type="button" class="ds-tool-btn" id="btn-attach" title="上传文件" aria-label="上传文件">
+                <button type="button" class="ds-tool-btn" id="btn-attach" title="引用文件（右键引用文件夹）" aria-label="引用文件">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 </button>
               </div>
@@ -208,12 +215,17 @@
   <script src="https://ds-inject.local/dd-webview-shim.js"></script>
   <script src="https://ds-inject.local/bridge.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
-  <script src="message-render.js?v=2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" crossorigin="anonymous"></script>
+  <script src="monaco/vs/loader.js"></script>
+  <script src="monaco-host.js?v=4"></script>
+  <script src="diff-host.js?v=1"></script>
+  <script src="terminal-panel.js?v=1"></script>
+  <script src="message-render.js?v=11"></script>
   <script src="https://ds-inject.local/work-mode-client.js"></script>
   <script src="modules/embed-url.js"></script>
-  <script src="agent-app.js?v=26"></script>
+  <script src="agent-app.js?v=49"></script>
 </body>
 </html>

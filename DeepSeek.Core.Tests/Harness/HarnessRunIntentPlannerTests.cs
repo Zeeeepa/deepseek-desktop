@@ -26,6 +26,7 @@ public sealed class HarnessRunIntentPlannerTests
     {
         var config = new AppConfig
         {
+            AgentAutoIntentRouting = true,
             EnableSubAgents = true,
             EnableParallelExplore = true,
             AgentIntentUseLlmPlanner = false

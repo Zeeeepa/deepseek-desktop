@@ -49,6 +49,12 @@ public static class HarnessShellRunner
         {
             await proc.WaitForExitAsync(timeoutCts.Token);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            HarnessProcessTree.Kill(proc.Id);
+            try { proc.Kill(entireProcessTree: true); } catch { /* ignore */ }
+            throw;
+        }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             timedOut = true;

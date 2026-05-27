@@ -33,6 +33,11 @@ public sealed class ApprovalGate
         if (suppressPrompt)
             return true;
 
+        var workspace = _config.AgentWorkspaceRoot;
+        if (!string.IsNullOrWhiteSpace(workspace)
+            && HarnessApprovalRulesStore.IsPreApproved(workspace, toolName, detail))
+            return true;
+
         var mode = (_config.AgentApprovalMode ?? "smart").Trim().ToLowerInvariant();
         if (mode is "never")
             return true;

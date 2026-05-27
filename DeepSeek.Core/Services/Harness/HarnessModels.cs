@@ -36,7 +36,23 @@ public sealed class HarnessRunResult
     public string? GraphThreadId { get; init; }
     public string? GraphId { get; init; }
     public bool GraphPaused { get; init; }
+    public long DurationMs { get; init; }
+    public int PromptTokens { get; init; }
+    public int CompletionTokens { get; init; }
+    public int LlmCallCount { get; init; }
+    public int ToolCallCount { get; init; }
+    public int PatchesAccepted { get; init; }
+    public int PatchesRejected { get; init; }
+    public double? PatchAcceptRate { get; init; }
 }
+
+public readonly record struct HarnessShellEvent(
+    string Command,
+    string Chunk,
+    bool Started,
+    bool Completed,
+    int? ExitCode,
+    bool TimedOut);
 
 public sealed class HarnessRunCallbacks
 {
@@ -44,8 +60,12 @@ public sealed class HarnessRunCallbacks
     public Action<string, bool>? OnThinking { get; init; }
     public Action<string, bool>? OnAnswerDelta { get; init; }
     public Action<AgentUiActivity>? OnActivity { get; init; }
+    public Action<AgentFilePreview>? OnFilePreview { get; init; }
+    public Action<AgentPendingPatch>? OnPendingPatch { get; init; }
     public Action<string>? OnShellOutput { get; init; }
+    public Action<HarnessShellEvent>? OnShellEvent { get; init; }
     public Action<HarnessPhase>? OnPhaseChanged { get; init; }
+    public Action<string>? OnPlanUpdated { get; init; }
 }
 
 public sealed class HarnessRunState

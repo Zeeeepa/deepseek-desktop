@@ -72,6 +72,8 @@ $autoJs = Join-Path $PublishDir "Assets\agent\automations-embed.js"
 Assert-File $autoEmbed "Agent automations embed"
 Assert-TextFileContains $agentIndex "auto-intro" "Agent automations intro modal"
 Assert-TextFileContains $agentIndex "message-render.js" "Agent message render"
+Assert-TextFileContains $agentIndex "monaco-host.js" "Agent Monaco code editor"
+Assert-TextFileContains $agentIndex "monaco/vs/loader.js" "Agent Monaco bundle"
 Assert-TextFileContains $agentIndex "katex" "Agent KaTeX math"
 Assert-TextFileContains $agentApp 'openEmbeddedPanel("automations")' "Agent automations panel entry"
 Assert-TextFileContains $autoJs "agentAutomationsList" "Agent automations IPC"
@@ -178,9 +180,24 @@ if (-not (Test-Path $cfgPath)) {
     if (Test-Path $legacyCfg) { $cfgPath = $legacyCfg }
 }
 if (Test-Path $cfgPath) {
-    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-    if ($cfg.LocalApiPort -eq 5111) {
-        Write-Host "  OK legacy LocalApiPort=5111 ignored at runtime (migrated on load)"
+    $repairOutcome = & (Join-Path $PSScriptRoot "Invoke-ConfigFileRepair.ps1") -Configuration Release -RepoRoot $root
+    if ($repairOutcome -eq "Repaired") {
+        Write-Host "  OK user config.json repaired before verify"
+    }
+    try {
+        $cfgRaw = [System.IO.File]::ReadAllText($cfgPath, [System.Text.UTF8Encoding]::new($false))
+        $cfg = $cfgRaw | ConvertFrom-Json
+        if ($cfg.LocalApiPort -eq 5111) {
+            Write-Host "  OK legacy LocalApiPort=5111 ignored at runtime (migrated on load)"
+        }
+        if ($cfg.webUserToken -match '^\s*\{\s*"value"') {
+            Write-Host "  OK webUserToken wrapper will be normalized on next app load"
+        }
+        Write-Host "  OK user config.json parseable (UTF-8)"
+    }
+    catch {
+        Write-Host "  WARN user config.json invalid JSON — delete or fix manually: $cfgPath"
+        Write-Host "        $($_.Exception.Message)"
     }
 }
 
@@ -199,6 +216,12 @@ if ($Smoothness -and (Test-Path (Join-Path $PublishDir "DeepSeek.exe"))) {
 $viteBundle = Get-ChildItem (Join-Path $root "Assets\dsd-api\assets\index-*.js") -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($viteBundle) {
     Write-Host "  OK DSD API Vite bundle present ($($viteBundle.Name)) — do not hand-edit; rebuild via build-dsd-api-ui.ps1"
+}
+
+Assert-TextFileContains (Join-Path $PublishDir "Assets\inject\bridge.js") "reasoning_content: thinkingText" "bridge thinking/content split"
+$evalSample = Join-Path $root "scripts\evals\sample.json"
+if (Test-Path $evalSample) {
+    Write-Host "  OK eval sample present (scripts/evals/sample.json)"
 }
 
 Write-Host "  OK WPF single entry (use -Qt only for legacy Qt/Bridge layout checks)"

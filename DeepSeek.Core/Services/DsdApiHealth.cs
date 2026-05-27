@@ -16,10 +16,10 @@ public sealed record DsdApiHealth
         CanChat
             ? "已登录，API 管理可用"
             : !ConfigLoggedIn
-                ? "未登录：请先在普通对话页登录 DeepSeek"
+                ? "未配置：请在 API 管理中添加 DeepSeek 账户并填写用户 Token"
                 : !BridgeReady
                     ? "桥接未就绪：无法加载 chat.deepseek.com（检查网络/代理）"
                     : !BridgeHasUserToken
-                        ? "桥接无 userToken：请打开普通对话完成登录后重试"
+                        ? "桥接无 Token：请在 API 管理中添加 DeepSeek 账户"
                         : Error ?? "API 管理不可用";
 }

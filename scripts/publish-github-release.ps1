@@ -1,8 +1,8 @@
 # Publish DeepSeek Desktop source + release zip to GitHub.
 # Requires: git, network to github.com, GitHub CLI (gh) authenticated via `gh auth login`
 param(
-    [string]$Version = "2.4.0",
-    [string]$Tag = "v2.4.0",
+    [string]$Version = "2.5.0",
+    [string]$Tag = "v2.5.0",
     [switch]$SkipBuild,
     [switch]$SkipPush
 )

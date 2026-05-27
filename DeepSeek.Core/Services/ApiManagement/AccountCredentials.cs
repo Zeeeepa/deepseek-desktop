@@ -26,6 +26,30 @@ public static class AccountCredentials
             : null;
     }
 
+    /// <summary>
+    /// Agent / 网页桥接用 Token：仅 API 管理账户（<c>provider-accounts.json</c>），不从普通对话 localStorage 回退。
+    /// </summary>
+    public static string? ResolveWebUserTokenForRoute(
+        ProviderAccountRecord? account,
+        AppConfig config,
+        string? providerId = null,
+        bool allowConfigFallback = false)
+    {
+        var fromRoute = ResolveWebUserToken(account, config, allowConfigFallback: false);
+        if (!string.IsNullOrWhiteSpace(fromRoute))
+            return fromRoute;
+
+        var pid = string.IsNullOrWhiteSpace(providerId) ? "deepseek" : providerId.Trim();
+        return ResolveFirstProviderWebToken(pid, config);
+    }
+
+    /// <summary>将 API 管理账户 Token 同步到 config（供桥接注入；非普通对话登录）。</summary>
+    public static void SyncConfigWebTokenFromApiAccounts(AppConfig config, string providerId = "deepseek")
+    {
+        var token = ResolveFirstProviderWebToken(providerId, config);
+        config.WebUserToken = string.IsNullOrWhiteSpace(token) ? "" : token.Trim();
+    }
+
     public static string? ResolveFirstProviderWebToken(string providerId, AppConfig config) =>
         ProviderAccountStore.ByProvider(providerId)
             .Select(a => ResolveWebUserToken(a, config))

@@ -1,16 +1,24 @@
 param(
     [string]$DsdApiRendererSource = "",
     [string]$DestDir = "",
-    [switch]$ForceRebuild
+    [switch]$ForceRebuild,
+    [switch]$ApplyLegacyBundlePatches
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 if (-not $DestDir) { $DestDir = Join-Path $root "Assets\dsd-api" }
 $uiSrc = Join-Path $root "Assets\dsd-api-ui"
+$webRenderer = Join-Path $root "web\dsd-api-renderer"
 $defaultRenderer = Join-Path (Split-Path $root -Parent) "Chat2API-main\Chat2API-main"
-if (-not $DsdApiRendererSource -and (Test-Path $defaultRenderer)) {
-    $DsdApiRendererSource = $defaultRenderer
+if (-not $DsdApiRendererSource) {
+    if (Test-Path (Join-Path $webRenderer "renderer-source.path")) {
+        $hint = (Get-Content (Join-Path $webRenderer "renderer-source.path") -Raw).Trim()
+        if ($hint -and (Test-Path $hint)) { $DsdApiRendererSource = $hint }
+    }
+    if (-not $DsdApiRendererSource -and (Test-Path $defaultRenderer)) {
+        $DsdApiRendererSource = $defaultRenderer
+    }
 }
 $rendererOut = if ($DsdApiRendererSource) { Join-Path $DsdApiRendererSource "out\renderer" } else { "" }
 $indexPath = Join-Path $DestDir "index.html"
@@ -344,18 +352,23 @@ function Apply-DsdDesktopBundleBranding {
     Write-Host "  OK DeepSeek Desktop (DPDT) branding applied to renderer bundles"
 }
 
-Remove-DsdApiAboutPage -AssetsDir $DestDir
-Remove-DsdApiTrayAndNotificationSettings -AssetsDir $DestDir
-Remove-DsdApiLanguageSettings -AssetsDir $DestDir
-Fix-DsdApiThemeProvider -AssetsDir $DestDir
-Apply-DsdApiChineseLocale -AssetsDir $DestDir
-Patch-DsdApiProvidersLoginFailed -AssetsDir $DestDir
-Enable-DsdApiCustomProviderTab -AssetsDir $DestDir
-Apply-DsdDesktopBundleBranding -AssetsDir $DestDir
+if ($ApplyLegacyBundlePatches) {
+    Write-Host "Applying legacy minified bundle patches (prefer renderer source + VITE_DSD_EMBEDDED; see web/dsd-api-renderer/README.md)."
+    Remove-DsdApiAboutPage -AssetsDir $DestDir
+    Remove-DsdApiTrayAndNotificationSettings -AssetsDir $DestDir
+    Remove-DsdApiLanguageSettings -AssetsDir $DestDir
+    Fix-DsdApiThemeProvider -AssetsDir $DestDir
+    Apply-DsdApiChineseLocale -AssetsDir $DestDir
+    Patch-DsdApiProvidersLoginFailed -AssetsDir $DestDir
+    Enable-DsdApiCustomProviderTab -AssetsDir $DestDir
+    Apply-DsdDesktopBundleBranding -AssetsDir $DestDir
 
-$brandingHits = Select-String -Path (Join-Path $DestDir "assets\*.js") -Pattern "Chat2API|chat2api-settings" -SimpleMatch -ErrorAction SilentlyContinue
-if ($brandingHits) {
-    throw "DSD API bundle still contains legacy Chat2API branding: $($brandingHits[0].Filename)"
+    $brandingHits = Select-String -Path (Join-Path $DestDir "assets\*.js") -Pattern "Chat2API|chat2api-settings" -SimpleMatch -ErrorAction SilentlyContinue
+    if ($brandingHits) {
+        throw "DSD API bundle still contains legacy Chat2API branding: $($brandingHits[0].Filename)"
+    }
+} else {
+    Write-Host "Skipping legacy bundle regex patches (overlay scripts + index.html only). Use -ApplyLegacyBundlePatches after upstream rebuild if needed."
 }
 
 & (Join-Path (Split-Path $PSScriptRoot -Parent) "scripts\sync-agent-dsd-api.ps1") -Root (Split-Path $PSScriptRoot -Parent)

@@ -28,10 +28,15 @@
 
   let tokenCache = null;
   let sessionCache = null;
+  /** streamId → { abort: fn } */
+  const activeWebStreams = new Map();
 
   function getUserToken() {
     try {
       if (window.__dsWebUserToken) return String(window.__dsWebUserToken);
+      if (window.__dsAgentApiAccountOnly) {
+        throw new Error("请在 API 管理中添加 DeepSeek 账户并填写用户 Token（与普通对话登录无关）");
+      }
       const raw = localStorage.getItem("userToken") || "";
       if (!raw) return "";
       try {
@@ -51,7 +56,13 @@
 
   async function acquireToken() {
     const userToken = getUserToken();
-    if (!userToken) throw new Error("未登录：请先在网页登录 DeepSeek");
+    if (!userToken) {
+      throw new Error(
+        window.__dsAgentApiAccountOnly
+          ? "未配置：请在 API 管理中添加 DeepSeek 账户并填写用户 Token"
+          : "未登录：请先在网页登录 DeepSeek"
+      );
+    }
 
     const now = Math.floor(Date.now() / 1000);
     if (tokenCache && tokenCache.userToken === userToken && tokenCache.expiresAt > now) {
@@ -61,12 +72,22 @@
     const r = await fetch(WEB_API + "/v0/users/current", {
       headers: { Authorization: "Bearer " + userToken, ...HEADERS },
     });
-    if (r.status === 401 || r.status === 403) throw new Error("网页登录已过期，请重新登录");
+    if (r.status === 401 || r.status === 403) {
+      throw new Error(
+        window.__dsAgentApiAccountOnly
+          ? "API 账户 Token 无效或已过期，请在 API 管理中更新"
+          : "网页登录已过期，请重新登录"
+      );
+    }
     if (!r.ok) throw new Error("获取网页 Token 失败: " + r.status);
 
     const j = await r.json();
     if (j?.code === 40003 || j?.data?.biz_code === 40003) {
-      throw new Error("网页登录已过期，请在普通对话页重新登录 DeepSeek");
+      throw new Error(
+        window.__dsAgentApiAccountOnly
+          ? "API 账户 Token 无效或已过期，请在 API 管理中更新"
+          : "网页登录已过期，请在普通对话页重新登录 DeepSeek"
+      );
     }
     if (j?.code && j.code !== 0) {
       throw new Error(j.msg || j.data?.biz_msg || "获取网页 Token 失败");
@@ -301,8 +322,9 @@
       (opts?.thinking !== false &&
         (Boolean(opts?.thinking) || m.includes("r1") || m.includes("think") || m.includes("reasoner")));
     let modelType = "default";
-    if (opts?.modelType === "expert" || opts?.expert) modelType = "expert";
-    else if (m.includes("pro") || m.includes("expert") || m.includes("reasoner")) modelType = "expert";
+    if (m.includes("flash")) modelType = "default";
+    else if (opts?.modelType === "expert" || opts?.expert || m.includes("pro") || m.includes("reasoner"))
+      modelType = "expert";
     return { modelType, searchEnabled, thinkingEnabled };
   }
 
@@ -325,7 +347,26 @@
     return fileId;
   }
 
+  function isAgentHostPage() {
+    try {
+      return /(^|\.)ds-agent\.local$/i.test(String(location.hostname || ""));
+    } catch (_) {
+      return false;
+    }
+  }
+
   async function uploadUserFile(file) {
+    if (isAgentHostPage()) {
+      const path = file && (file.path || file.webkitRelativePath);
+      if (path && typeof window.__dsAgentIngestPaths === "function") {
+        await window.__dsAgentIngestPaths([String(path)]);
+        return "";
+      }
+      if (path) return "";
+      throw new Error(
+        "请拖入文件夹或使用 @ / 📎 引用本地路径（不会上传到 DeepSeek 云端）。"
+      );
+    }
     const accessToken = await acquireToken();
     const form = new FormData();
     form.append("file", file, file.name || "upload.txt");
@@ -477,23 +518,80 @@
     return t.length > 1500;
   }
 
+  function normalizeToolName(raw) {
+    let n = String(raw || "").trim();
+    const idx = n.indexOf("__");
+    if (idx >= 0) n = n.slice(idx + 2);
+    const lower = n.toLowerCase();
+    if (lower === "list_directory") return "list_dir";
+    if (lower === "write") return "write_file";
+    if (lower === "read") return "read_file";
+    if (lower === "bash") return "run_shell";
+    return n;
+  }
+
   function parseToolCalls(text) {
     const toolCalls = [];
+    let clean = text || "";
     const re = /<tool_calling>\s*<name>([^<]+)<\/name>\s*<arguments>([\s\S]*?)<\/arguments>\s*<\/tool_calling>/gi;
     let m;
-    let clean = text || "";
     while ((m = re.exec(text || "")) !== null) {
       toolCalls.push({
         id: "call_" + Math.random().toString(36).slice(2, 10),
         type: "function",
-        function: { name: m[1].trim(), arguments: m[2].trim() },
+        function: { name: normalizeToolName(m[1]), arguments: m[2].trim() },
       });
       clean = clean.replace(m[0], "");
     }
+    if (toolCalls.length) return { content: clean.trim(), toolCalls };
+
+    const loose =
+      /(?:^|\n|\s)(?:[0-9a-f]{6,}__)?(list_directory|list_dir|write_file|write|read_file|read|grep|glob|run_shell|bash)\s*(\{[\s\S]*?\})(?=\s|$|\n)/gi;
+    while ((m = loose.exec(text || "")) !== null) {
+      toolCalls.push({
+        id: "call_" + Math.random().toString(36).slice(2, 10),
+        type: "function",
+        function: { name: normalizeToolName(m[1]), arguments: m[2].trim() },
+      });
+    }
+    if (toolCalls.length) {
+      clean = text.replace(loose, "").trim();
+      return { content: clean, toolCalls };
+    }
+
+    const callLine =
+      /(?:^|\n)\s*Call:\s*`?((?:[0-9a-f]{6,}__)?(?:write_file|write|read_file|read|list_dir|list_directory|grep|glob|run_shell|bash))`?\s*([\s\S]*)/gi;
+    while ((m = callLine.exec(text || "")) !== null) {
+      const name = normalizeToolName(m[1]);
+      const rest = m[2] || "";
+      let args = null;
+      const json = rest.match(/(\{[\s\S]*?\})/);
+      if (json) args = json[1];
+      else {
+        const fence = rest.match(/```(?:\w+)?\s*([\s\S]*?)```/);
+        if (fence && (name === "write_file" || name === "write")) {
+          const ext = (rest.match(/```(\w+)/) || [])[1] || "html";
+          const file = ext === "html" || ext === "htm" ? "index.html" : "output." + ext;
+          args = JSON.stringify({ file_path: file, content: fence[1].trim() });
+        }
+      }
+      if (args) {
+        toolCalls.push({
+          id: "call_" + Math.random().toString(36).slice(2, 10),
+          type: "function",
+          function: { name, arguments: args },
+        });
+      }
+    }
+    if (toolCalls.length) {
+      clean = text.replace(callLine, "").trim();
+      return { content: clean, toolCalls };
+    }
+
     return { content: clean.trim(), toolCalls };
   }
 
-  async function fetchWebCompletion(messages, model, opts) {
+  async function fetchWebCompletion(messages, model, opts, signal) {
     const accessToken = await acquireToken();
     const sessionId =
       opts && opts.chatSessionId
@@ -509,6 +607,7 @@
 
     const r = await fetch(WEB_API + "/v0/chat/completion", {
       method: "POST",
+      signal: signal || undefined,
       headers: {
         Authorization: "Bearer " + accessToken,
         "Content-Type": "application/json",
@@ -537,18 +636,19 @@
 
   function buildChatResult(content, thinking, sessionId, model, opts) {
     const suppressTools = !!(opts && opts.suppressToolCalls);
-    let mainContent = (content || "").trim();
-    if (!mainContent && suppressTools && thinking) {
-      mainContent = String(thinking).trim();
-    }
+    const mainContent = (content || "").trim();
+    const thinkingText = (thinking || "").trim();
+    // Harness 路径：思考仅走 reasoning_content / delta(kind=reasoning)，永不灌进正文
     const parsed = suppressTools
       ? { content: mainContent, toolCalls: [] }
-      : parseToolCalls(content);
-    const textOut = parsed.toolCalls.length ? null : parsed.content || "(无回复)";
+      : parseToolCalls(mainContent || thinkingText);
+    const textOut = parsed.toolCalls.length
+      ? null
+      : parsed.content || mainContent || (suppressTools ? "" : "(无回复)");
     const likelyTruncated = detectLikelyTruncated(textOut);
     return {
       content: textOut,
-      reasoning_content: thinking || undefined,
+      reasoning_content: thinkingText || undefined,
       tool_calls: parsed.toolCalls.length ? parsed.toolCalls : undefined,
       model: model || "deepseek-chat",
       finish_reason: likelyTruncated ? "length" : parsed.toolCalls.length ? "tool_calls" : "stop",
@@ -565,14 +665,62 @@
 
   async function webChatCompletionStreaming(streamId, messages, model, opts) {
     postBridgeStream(streamId, { type: "delta", kind: "status", text: "connecting" });
-    const { response, sessionId, model: m } = await fetchWebCompletion(messages, model, opts);
-    const onDelta = (kind, text) => {
-      postBridgeStream(streamId, { type: "delta", kind, text });
-    };
-    const { content, thinking } = await parseStreamText(response.body.getReader(), onDelta);
-    const result = buildChatResult(content, thinking, sessionId, m, opts);
-    postBridgeStream(streamId, { type: "done", result });
-    return result;
+    const ac = new AbortController();
+    activeWebStreams.set(streamId, {
+      abort: function () {
+        try {
+          ac.abort();
+        } catch (_) {}
+      },
+    });
+    try {
+      const { response, sessionId, model: m } = await fetchWebCompletion(
+        messages,
+        model,
+        opts,
+        ac.signal
+      );
+      const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+      if (reader) {
+        activeWebStreams.set(streamId, {
+          abort: function () {
+            try {
+              ac.abort();
+            } catch (_) {}
+            try {
+              reader.cancel();
+            } catch (_) {}
+          },
+        });
+      }
+      const onDelta = (kind, text) => {
+        postBridgeStream(streamId, { type: "delta", kind, text });
+      };
+      const { content, thinking } = reader
+        ? await parseStreamText(reader, onDelta)
+        : { content: "", thinking: "" };
+      const result = buildChatResult(content, thinking, sessionId, m, opts);
+      postBridgeStream(streamId, { type: "done", result });
+      return result;
+    } catch (e) {
+      if (ac.signal.aborted || (e && e.name === "AbortError")) {
+        postBridgeStream(streamId, { type: "error", message: "已取消" });
+        return null;
+      }
+      throw e;
+    } finally {
+      activeWebStreams.delete(streamId);
+    }
+  }
+
+  function abortWebChatStream(streamId) {
+    const h = activeWebStreams.get(streamId);
+    if (!h) return false;
+    try {
+      h.abort();
+    } catch (_) {}
+    activeWebStreams.delete(streamId);
+    return true;
   }
 
   window.dsDesktopBridge = {
@@ -600,5 +748,6 @@
         throw new Error(msg || "网页 Chat API 调用失败");
       }
     },
+    abortWebChatStream,
   };
 })();

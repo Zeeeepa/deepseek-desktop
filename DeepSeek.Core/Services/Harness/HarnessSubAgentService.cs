@@ -96,6 +96,8 @@ public sealed class HarnessSubAgentService
                 OnThinking = parentCallbacks?.OnThinking,
                 OnAnswerDelta = parentCallbacks?.OnAnswerDelta,
                 OnActivity = parentCallbacks?.OnActivity,
+                OnFilePreview = parentCallbacks?.OnFilePreview,
+                OnPendingPatch = parentCallbacks?.OnPendingPatch,
                 OnShellOutput = parentCallbacks?.OnShellOutput,
                 OnPhaseChanged = parentCallbacks?.OnPhaseChanged
             };

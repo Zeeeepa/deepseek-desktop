@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using DeepSeekBrowser.Models;
+using DeepSeekBrowser.Services.ApiManagement;
 using DeepSeekBrowser.Services.Harness.Interop;
 
 namespace DeepSeekBrowser.Services.Harness;
@@ -115,7 +116,7 @@ public static class HarnessRunIntentPlanner
             request.RefFileIds,
             allowToolCalls: false,
             ct,
-            request.Config.WebUserToken,
+            AccountCredentials.ResolveWebUserTokenForRoute(null, request.Config, "deepseek"),
             request.WebChatSessionId);
 
         var parsed = TryParseLlmJson(result.Content);
@@ -215,8 +216,10 @@ public static class HarnessRunIntentPlanner
         if (p.Contains("测试") || p.Contains("test") || p.Contains("build") || p.Contains("编译"))
             Add("run_shell", "运行验证命令");
         if (p.Contains("代码") || p.Contains("文件") || p.Contains("bug") || p.Contains("refactor")
-            || p.Contains("implement") || p.Contains("修复"))
+            || p.Contains("implement") || p.Contains("修复")
+            || p.Contains("创建") || p.Contains("游戏") || p.Contains("小游戏") || p.Contains("贪吃蛇"))
         {
+            Add("write_file", "创建或更新实现文件");
             Add("grep", "定位相关符号与引用");
             Add("read_file", "阅读实现与上下文");
         }
@@ -267,9 +270,10 @@ public static class HarnessRunIntentPlanner
         if (NeedsBroadExploration(prompt))
             return "需要对工作区进行调研与信息汇总。";
         var p = prompt.ToLowerInvariant();
-        if (p.Contains("写") || p.Contains("改") || p.Contains("fix") || p.Contains("add"))
-            return "需要在 workspace 内修改或实现代码/文件。";
-        return "通用任务：先收集必要事实再执行。";
+        if (p.Contains("写") || p.Contains("改") || p.Contains("fix") || p.Contains("add")
+            || p.Contains("创建") || p.Contains("游戏") || p.Contains("贪吃蛇"))
+            return "需要在 workspace 内创建或实现文件/功能。";
+        return "通用任务：先简要确认范围，再调用工具执行。";
     }
 
     private static string BuildHeuristicNotes(string prompt, AppConfig config)

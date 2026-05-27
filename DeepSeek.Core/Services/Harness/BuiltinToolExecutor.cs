@@ -59,7 +59,8 @@ public sealed class BuiltinToolExecutor
         {
             "read_file" or "read" => HarnessReadFileTool.Execute(root, paths),
             "write_file" or "write" => HarnessToolExecuteResult.FromOutput(WriteFile(root, paths)),
-            "edit_file" or "edit" => HarnessToolExecuteResult.FromOutput(HarnessEditFileTool.Execute(root, paths)),
+            "edit_file" or "edit" => HarnessToolExecuteResult.FromEdit(
+                HarnessEditFileTool.Execute(root, paths, config)),
             "list_dir" => HarnessToolExecuteResult.FromOutput(ListDir(root, paths)),
             "grep" => HarnessToolExecuteResult.FromOutput(Grep(root, paths, ct)),
             "glob" => HarnessToolExecuteResult.FromOutput(Glob(root, paths)),
@@ -110,6 +111,9 @@ public sealed class BuiltinToolExecutor
         var path = GetString(args, "file_path") ?? GetString(args, "path")
                    ?? throw new ArgumentException("write_file 需要 file_path");
         var content = GetString(args, "content") ?? "";
+        var redacted = HarnessSecretScanner.RedactIfNeeded(content);
+        if (redacted is not null)
+            return redacted;
         string full;
         try
         {

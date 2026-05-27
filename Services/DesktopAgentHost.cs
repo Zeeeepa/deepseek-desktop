@@ -3,6 +3,8 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using DeepSeekBrowser.AppLayer.Agent;
+using DeepSeekBrowser.AppLayer.Embedded;
 using DeepSeekBrowser.Models;
 using DeepSeekBrowser.Services;
 using DeepSeekBrowser.Services.ApiManagement;
@@ -30,6 +32,9 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     private Window? _owner;
     private AgentRunWindow? _agentWindow;
     private DsdApiIpcBridge? _dsdApiIpc;
+    private readonly AgentWebViewCoordinator _embedCoordinator = new();
+    private readonly EmbeddedPanelRegistry _embeddedPanels = new();
+    private readonly AgentSessionOrchestrator _sessionOrchestrator = new();
     private EmbeddedSettingsSupport? _embeddedSettings;
     private readonly AgentSessionStore _agentSessions = new();
     private DeepSeekHarnessRunner? _harnessRunner;
@@ -167,8 +172,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     public async Task WarmDsdApiBridgeAsync()
     {
         ReloadConfig();
-        if (!string.IsNullOrWhiteSpace(_config.WebUserToken))
-            await _pages.SyncApiBridgeTokenAsync(_config.WebUserToken);
+        await SyncApiBridgeFromApiAccountsAsync();
         try
         {
             await _pages.EnsureApiBridgeReadyAsync();
@@ -254,16 +258,12 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                 if (_pages.Chat is WebInjectService chatInject)
                     _ = chatInject.EnsureChatModeFloaterAsync();
                 _ = RefreshLoginStateBackgroundAsync();
-                if (!string.IsNullOrWhiteSpace(_config.WebUserToken) && _mcpHub.ConnectedCount == 0)
+                var apiToken = AccountCredentials.ResolveWebUserTokenForRoute(null, _config, "deepseek");
+                if (!string.IsNullOrWhiteSpace(apiToken) && _mcpHub.ConnectedCount == 0)
                     _ = ConnectEnabledMcpServersAsync();
                 break;
             case "syncToken":
-                if (msg.TryGetProperty("token", out var tok) && tok.ValueKind == JsonValueKind.String)
-                {
-                    var t = tok.GetString();
-                    if (!string.IsNullOrWhiteSpace(t))
-                        await ApplyWebUserTokenAsync(t);
-                }
+                // 已废弃：Agent 不从普通对话 localStorage 同步 Token
                 break;
             case "refreshLoginState":
                 await RefreshLoginStateAsync();
@@ -358,8 +358,6 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                 }
                 break;
             case "navigateToAgent":
-                await ApplyTokenFromMessageAsync(msg);
-                await SyncTokenFromChatPageAsync();
                 _config.DefaultWorkMode = "agent";
                 ConfigStore.Save(_config);
                 if (NavigateToUrl is not null)
@@ -395,6 +393,9 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                 }
 
                 var sessionId = msg.TryGetProperty("sessionId", out var sidEl) ? sidEl.GetString() : null;
+                var webChatSessionIdHint = msg.TryGetProperty("webChatSessionId", out var wcsEl)
+                    ? wcsEl.GetString()
+                    : null;
                 var harnessState = msg.TryGetProperty("harnessState", out var hsEl)
                     ? hsEl.GetString()
                     : (msg.TryGetProperty("tuiThreadId", out var ttEl) ? ttEl.GetString() : null);
@@ -417,10 +418,19 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
 
                 _ = RunAgentAsync(
                     text!, chatMode ?? "专家", deepThink, smartSearch, mcpOn,
-                    strategy ?? _config.DefaultAgentStrategy ?? AgentStrategies.Execute, refIds, sessionId, harnessState, playbookId, skillId);
+                    strategy ?? _config.DefaultAgentStrategy ?? AgentStrategies.Execute, refIds, sessionId, harnessState, playbookId, skillId, webChatSessionIdHint);
                 break;
             case "agentStop":
-                _runCts?.Cancel();
+                CancelAgentRun();
+                break;
+            case "agentPatchResolve":
+                HandleAgentPatchResolve(msg);
+                break;
+            case "agentIndexStatus":
+                await HandleAgentIndexStatusAsync(msg);
+                break;
+            case "agentUndoSession":
+                await HandleAgentUndoSessionAsync(msg);
                 break;
             case "setAgentFeatures":
                 if (msg.TryGetProperty("deepThink", out var dtEl))
@@ -484,6 +494,18 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                 break;
             case "agentWorkspaceFiles":
                 await HandleAgentWorkspaceFilesAsync(msg);
+                break;
+            case "agentNormalizePaths":
+                await HandleAgentNormalizePathsAsync(msg);
+                break;
+            case "agentPathPicker":
+                await HandleAgentPathPickerAsync(msg);
+                break;
+            case "agentPickFolder":
+                await HandleAgentPickFolderAsync(msg);
+                break;
+            case "agentPickReferences":
+                await HandleAgentPickReferencesAsync(msg);
                 break;
             case "agentWorkspaceReadSnippet":
                 await HandleAgentWorkspaceReadSnippetAsync(msg);
@@ -553,10 +575,51 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                 dict[p.Name] = "allow";
             _config.AgentPermissionScopesJson = JsonSerializer.Serialize(dict);
             ConfigStore.Save(_config);
+
+            var tool = msg.TryGetProperty("toolName", out var tn) ? tn.GetString() : "write";
+            var workspace = _config.AgentWorkspaceRoot;
+            if (!string.IsNullOrWhiteSpace(workspace))
+                HarnessApprovalRulesStore.AddAlwaysAllow(workspace, tool ?? "write", "*");
         }
 
         _permissionTcs?.TrySetResult(allow);
         _permissionTcs = null;
+    }
+
+    private void HandleAgentPatchResolve(JsonElement msg)
+    {
+        var patchId = msg.TryGetProperty("patchId", out var idEl) ? idEl.GetString() : null;
+        if (string.IsNullOrWhiteSpace(patchId)) return;
+        var accepted = !msg.TryGetProperty("accepted", out var aEl) || aEl.GetBoolean();
+        ReloadConfig();
+        var workspace = _config.AgentWorkspaceRoot;
+        if (string.IsNullOrWhiteSpace(workspace)) return;
+
+        if (accepted)
+        {
+            if (HarnessPatchStaging.TryAccept(workspace, patchId, out var err))
+            {
+                HarnessPatchMetrics.RecordAccepted();
+                _ = _pages.PostToPageAsync(new { type = "agentPatchResolved", patchId, accepted = true });
+            }
+            else
+                _ = _pages.PostToPageAsync(new { type = "agentLog", text = "Accept patch 失败: " + err });
+        }
+        else
+        {
+            HarnessPatchStaging.TryReject(workspace, patchId);
+            HarnessPatchMetrics.RecordRejected();
+            _ = _pages.PostToPageAsync(new { type = "agentPatchResolved", patchId, accepted = false });
+        }
+    }
+
+    private void CancelAgentRun()
+    {
+        _runCts?.Cancel();
+        _userQuestionTcs?.TrySetCanceled();
+        _permissionTcs?.TrySetCanceled();
+        _pages.CancelActiveWebChatStreams();
+        AgentDebugLogger.Current?.Write("AGENT", "用户请求停止");
     }
 
     public Task<bool> RequestScopeApprovalAsync(string toolName, string detail, IReadOnlyList<string> scopes)
@@ -655,6 +718,53 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         });
     }
 
+    private async Task HandleAgentUndoSessionAsync(JsonElement msg)
+    {
+        var reqId = msg.TryGetProperty("reqId", out var reqEl) ? reqEl.GetString() : null;
+        var runId = msg.TryGetProperty("runId", out var ridEl) ? ridEl.GetString() : null;
+        ReloadConfig();
+        var workspace = AgentWorkspace.ResolveRoot(_config);
+        if (string.IsNullOrWhiteSpace(runId) || string.IsNullOrWhiteSpace(workspace))
+        {
+            await _pages.PostToPageAsync(new { type = "agentUndoSession", reqId, ok = false });
+            return;
+        }
+
+        var store = new HarnessSessionStore(workspace);
+        var ok = store.TryUndoSessionRun(runId, workspace, out var restored);
+        await _pages.PostToPageAsync(new
+        {
+            type = "agentUndoSession",
+            reqId,
+            ok,
+            restoredFiles = restored
+        });
+    }
+
+    private async Task HandleAgentIndexStatusAsync(JsonElement msg)
+    {
+        var reqId = msg.TryGetProperty("reqId", out var reqEl) ? reqEl.GetString() : null;
+        ReloadConfig();
+        var workspace = AgentWorkspace.ResolveRoot(_config);
+        if (string.IsNullOrWhiteSpace(workspace))
+        {
+            await _pages.PostToPageAsync(new { type = "agentIndexStatus", reqId, ok = false });
+            return;
+        }
+
+        var indexer = DeepSeekBrowser.Services.Index.CodebaseIndexer.GetOrCreate(workspace);
+        indexer.EnsureWatching();
+        var status = indexer.GetStatus();
+        await _pages.PostToPageAsync(new
+        {
+            type = "agentIndexStatus",
+            reqId,
+            ok = true,
+            chunkCount = status.ChunkCount,
+            lastUpdatedUtc = status.LastUpdatedUtc?.ToString("O")
+        });
+    }
+
     private async Task HandleAgentUndoRestoreAsync(JsonElement msg)
     {
         var reqId = msg.TryGetProperty("reqId", out var reqEl) ? reqEl.GetString() : null;
@@ -700,6 +810,327 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         var workspace = AgentWorkspace.ResolveRoot(_config);
         var files = await Task.Run(() => CollectWorkspaceFiles(workspace, query, 60)).ConfigureAwait(true);
         await _pages.Agent.PostToPageAsync(new { type = "agentWorkspaceFiles", reqId, ok = true, files });
+    }
+
+    private async Task HandleAgentNormalizePathsAsync(JsonElement msg)
+    {
+        var reqId = msg.TryGetProperty("reqId", out var reqEl) ? reqEl.GetString() : null;
+        var input = new List<string>();
+        if (msg.TryGetProperty("paths", out var arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in arr.EnumerateArray())
+            {
+                var p = item.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(p))
+                    input.Add(p);
+            }
+        }
+
+        var refs = await Task.Run(() => NormalizePathRefs(input)).ConfigureAwait(true);
+        await _pages.Agent.PostToPageAsync(new { type = "agentPathRefs", reqId, ok = true, refs });
+    }
+
+    private static List<object> NormalizePathRefs(IReadOnlyList<string> paths)
+    {
+        var list = new List<object>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in paths)
+        {
+            try
+            {
+                var full = Path.GetFullPath(raw.Trim().Trim('"'));
+                if (!seen.Add(full))
+                    continue;
+
+                string kind;
+                if (Directory.Exists(full))
+                    kind = "folder";
+                else if (File.Exists(full))
+                    kind = "file";
+                else
+                    continue;
+
+                var name = Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (string.IsNullOrWhiteSpace(name))
+                    name = full;
+
+                list.Add(new { path = full, name, kind });
+            }
+            catch
+            {
+                // skip invalid paths
+            }
+        }
+
+        return list;
+    }
+
+    private async Task HandleAgentPathPickerAsync(JsonElement msg)
+    {
+        var reqId = msg.TryGetProperty("reqId", out var reqEl) ? reqEl.GetString() : null;
+        var query = msg.TryGetProperty("query", out var qEl) ? qEl.GetString() ?? "" : "";
+        var limit = 48;
+        if (msg.TryGetProperty("limit", out var limEl) && limEl.TryGetInt32(out var lim))
+            limit = Math.Clamp(lim, 8, 80);
+
+        var workspace = AgentWorkspace.ResolveRoot(_config);
+        var entries = await Task.Run(() => CollectPathPickerEntries(workspace, query, limit)).ConfigureAwait(true);
+        await _pages.Agent.PostToPageAsync(new { type = "agentPathPicker", reqId, ok = true, entries });
+    }
+
+    private async Task HandleAgentPickFolderAsync(JsonElement msg)
+    {
+        var reqId = msg.TryGetProperty("reqId", out var reqEl) ? reqEl.GetString() : null;
+        var picked = await PickWorkspaceFolderOnUiAsync("选择要引用的文件夹").ConfigureAwait(true);
+        object? entry = null;
+        if (!string.IsNullOrWhiteSpace(picked))
+        {
+            var full = Path.GetFullPath(picked);
+            var name = Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(name))
+                name = AgentWorkspaceRecents.DisplayName(full);
+            entry = new { path = full, name, kind = "folder" };
+        }
+
+        await _pages.Agent.PostToPageAsync(new { type = "agentPickFolder", reqId, ok = entry is not null, entry });
+    }
+
+    private async Task HandleAgentPickReferencesAsync(JsonElement msg)
+    {
+        var reqId = msg.TryGetProperty("reqId", out var reqEl) ? reqEl.GetString() : null;
+        var kind = msg.TryGetProperty("kind", out var kEl) ? (kEl.GetString() ?? "file").Trim() : "file";
+
+        var paths = new List<string>();
+        if (string.Equals(kind, "folder", StringComparison.OrdinalIgnoreCase))
+        {
+            var picked = await PickWorkspaceFolderOnUiAsync("选择要引用的文件夹").ConfigureAwait(true);
+            if (!string.IsNullOrWhiteSpace(picked))
+                paths.Add(picked);
+        }
+        else
+        {
+            var picked = await PickReferenceFilesOnUiAsync().ConfigureAwait(true);
+            if (picked?.Count > 0)
+                paths.AddRange(picked);
+        }
+
+        var refs = paths.Count == 0
+            ? new List<object>()
+            : await Task.Run(() => NormalizePathRefs(paths)).ConfigureAwait(true);
+        await _pages.Agent.PostToPageAsync(new { type = "agentPathRefs", reqId, ok = refs.Count > 0, refs });
+    }
+
+    private static async Task<List<string>> PickReferenceFilesOnUiAsync()
+    {
+        var picked = new List<string>();
+        await RunOnUiAsync(() =>
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "选择要引用的文件",
+                Multiselect = true,
+                CheckFileExists = true,
+                CheckPathExists = true
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                foreach (var name in dlg.FileNames)
+                {
+                    if (!string.IsNullOrWhiteSpace(name))
+                        picked.Add(name);
+                }
+            }
+
+            return Task.CompletedTask;
+        });
+        return picked;
+    }
+
+    private static List<object> CollectPathPickerEntries(string workspace, string? query, int maxCount)
+    {
+        var results = new List<(int Rank, object Entry)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var q = (query ?? "").Trim();
+
+        void TryAdd(string path, string section, int rank)
+        {
+            if (results.Count >= maxCount)
+                return;
+            try
+            {
+                var full = Path.GetFullPath(path);
+                if (!seen.Add(full))
+                    return;
+
+                string kind;
+                if (Directory.Exists(full))
+                    kind = "folder";
+                else if (File.Exists(full))
+                    kind = "file";
+                else
+                    return;
+
+                var name = Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (string.IsNullOrWhiteSpace(name))
+                    name = AgentWorkspaceRecents.DisplayName(full);
+
+                if (!string.IsNullOrWhiteSpace(q)
+                    && name.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0
+                    && full.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)
+                    return;
+
+                results.Add((rank, new { path = full, name, kind, section }));
+            }
+            catch
+            {
+                // skip invalid
+            }
+        }
+
+        if (Directory.Exists(workspace))
+            TryAdd(workspace, "工作区", 0);
+
+        foreach (var recent in AgentWorkspaceRecents.List())
+            TryAdd(recent, "最近", 1);
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(home))
+            TryAdd(home, "最近", 2);
+
+        if (Directory.Exists(workspace))
+            ScanWorkspaceForPicker(workspace, workspace, q, TryAdd, results, maxCount);
+
+        if (!string.IsNullOrWhiteSpace(q) && (q.Contains(':') || q.StartsWith("\\\\", StringComparison.Ordinal)))
+            BrowseAbsolutePathHint(q, TryAdd, results, maxCount);
+
+        return results
+            .OrderBy(r => r.Rank)
+            .Take(maxCount)
+            .Select(r => r.Entry)
+            .ToList();
+    }
+
+    private static void ScanWorkspaceForPicker(
+        string workspaceRoot,
+        string dir,
+        string q,
+        Action<string, string, int> tryAdd,
+        List<(int Rank, object Entry)> results,
+        int maxCount)
+    {
+        if (results.Count >= maxCount)
+            return;
+
+        IEnumerable<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFileSystemEntries(dir);
+        }
+        catch
+        {
+            return;
+        }
+
+        var folders = new List<string>();
+        var files = new List<string>();
+        foreach (var entry in entries)
+        {
+            var name = Path.GetFileName(entry);
+            if (string.IsNullOrEmpty(name))
+                continue;
+            if (Directory.Exists(entry))
+            {
+                if (ShouldSkipWorkspaceDir(name))
+                    continue;
+                folders.Add(entry);
+            }
+            else
+            {
+                var rel = Path.GetRelativePath(workspaceRoot, entry).Replace('\\', '/');
+                if (ShouldSkipWorkspaceFile(rel))
+                    continue;
+                files.Add(entry);
+            }
+        }
+
+        folders.Sort(StringComparer.OrdinalIgnoreCase);
+        files.Sort(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var folder in folders)
+        {
+            tryAdd(folder, "文件夹", 10);
+            if (results.Count >= maxCount)
+                return;
+            ScanWorkspaceForPicker(workspaceRoot, folder, q, tryAdd, results, maxCount);
+            if (results.Count >= maxCount)
+                return;
+        }
+
+        foreach (var file in files)
+        {
+            tryAdd(file, "文件", 20);
+            if (results.Count >= maxCount)
+                return;
+        }
+    }
+
+    private static void BrowseAbsolutePathHint(
+        string q,
+        Action<string, string, int> tryAdd,
+        List<(int Rank, object Entry)> results,
+        int maxCount)
+    {
+        if (results.Count >= maxCount)
+            return;
+
+        string? dir = null;
+        try
+        {
+            if (Directory.Exists(q))
+            {
+                dir = q;
+            }
+            else
+            {
+                var parent = Path.GetDirectoryName(q.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (!string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent))
+                    dir = parent;
+            }
+        }
+        catch
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(dir))
+            return;
+
+        IEnumerable<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFileSystemEntries(dir);
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var entry in entries.OrderBy(e => e, StringComparer.OrdinalIgnoreCase))
+        {
+            var name = Path.GetFileName(entry);
+            if (string.IsNullOrEmpty(name))
+                continue;
+            if (Directory.Exists(entry) && ShouldSkipWorkspaceDir(name))
+                continue;
+            if (!string.IsNullOrWhiteSpace(q)
+                && name.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0
+                && entry.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0)
+                continue;
+
+            tryAdd(entry, Directory.Exists(entry) ? "文件夹" : "文件", 5);
+            if (results.Count >= maxCount)
+                return;
+        }
     }
 
     private static List<string> CollectWorkspaceFiles(string workspace, string? query, int maxCount)
@@ -1282,20 +1713,14 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     private Task ReplyAgentSessionAsync(string? reqId, object payload) =>
         _pages.Agent.PostToPageAsync(new { type = "agentSession", reqId, payload });
 
-    public async Task SyncTokenFromChatPageAsync()
+    /// <summary>将 API 管理账户 Token 注入网页桥接（不从普通对话页读取）。</summary>
+    public async Task SyncApiBridgeFromApiAccountsAsync()
     {
-        if (_pages.IsAgentVisible)
+        ReloadConfig();
+        var token = AccountCredentials.ResolveWebUserTokenForRoute(null, _config, "deepseek");
+        if (string.IsNullOrWhiteSpace(token))
             return;
-
-        for (var attempt = 0; attempt < 10; attempt++)
-        {
-            await SyncTokenFromPageAsync();
-            ReloadConfig();
-            if (!string.IsNullOrWhiteSpace(_config.WebUserToken))
-                return;
-            if (attempt < 9)
-                await Task.Delay(attempt < 3 ? 60 : 150);
-        }
+        await _pages.SyncApiBridgeTokenAsync(token);
     }
 
     public async Task OnChatNavigationCompletedAsync() =>
@@ -1336,10 +1761,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(_config.WebUserToken))
-                await _pages.SyncApiBridgeTokenAsync(_config.WebUserToken);
-
-            await SyncTokenFromBridgeOrChatAsync();
+            await SyncApiBridgeFromApiAccountsAsync();
             ReloadConfig();
             await PushLoginStateAsync();
             await NotifyApiInfoAsync();
@@ -1347,24 +1769,6 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         catch
         {
             // 后台同步失败不影响已展示的登录状态
-        }
-    }
-
-    private async Task SyncTokenFromBridgeOrChatAsync()
-    {
-        try
-        {
-            var token = await _pages.TryReadUserTokenAsync();
-            if (string.IsNullOrWhiteSpace(token))
-                return;
-            var normalized = NormalizeUserToken(token);
-            if (string.IsNullOrWhiteSpace(normalized) || normalized == _config.WebUserToken)
-                return;
-            await ApplyWebUserTokenAsync(normalized);
-        }
-        catch
-        {
-            // 页面或桥接尚未就绪
         }
     }
 
@@ -1382,8 +1786,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     private void QueueAgentSurfaceFollowUp(JsonElement msg)
     {
         ConfigStore.Save(_config);
-        _ = ApplyTokenFromMessageAsync(msg);
-        _ = SyncTokenFromPageAsync();
+        _ = SyncApiBridgeFromApiAccountsAsync();
         _ = PushCachedLoginStateAsync();
         _ = PushLoginStateAfterAgentNavAsync();
         _ = RefreshLoginStateBackgroundAsync();
@@ -1392,7 +1795,6 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     private void QueueChatSurfaceFollowUp(JsonElement msg, bool skipBurst = false)
     {
         ConfigStore.Save(_config);
-        _ = ApplyTokenFromMessageAsync(msg);
         _ = RefreshLoginStateBackgroundAsync();
         if (!skipBurst)
             _pages.RequestChatInject("chat_surface_followup", forceReset: false);
@@ -1419,69 +1821,6 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         if (msg.ValueKind != JsonValueKind.Object)
             return false;
         return msg.TryGetProperty(name, out value);
-    }
-
-    private async Task ApplyTokenFromMessageAsync(JsonElement msg)
-    {
-        if (!TryGetMessageProperty(msg, "token", out var tokenEl) || tokenEl.ValueKind != JsonValueKind.String)
-            return;
-        var token = tokenEl.GetString();
-        if (!string.IsNullOrWhiteSpace(token))
-            await ApplyWebUserTokenAsync(token);
-    }
-
-    private async Task ApplyWebUserTokenAsync(string token)
-    {
-        var normalized = NormalizeUserToken(token);
-        if (string.IsNullOrWhiteSpace(normalized))
-            return;
-        _config.WebUserToken = normalized;
-        ConfigStore.Save(_config);
-        await DsdApiStackBootstrap.OnWebLoginAsync(_config, _localApi, ChatWebInject);
-        await NotifyApiInfoAsync();
-        await PushLoginStateAsync();
-    }
-
-    private static string? NormalizeUserToken(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-            return null;
-        var trimmed = raw.Trim();
-        try
-        {
-            using var doc = JsonDocument.Parse(trimmed);
-            if (doc.RootElement.ValueKind == JsonValueKind.String)
-                return doc.RootElement.GetString();
-        }
-        catch
-        {
-            // plain token string
-        }
-
-        return trimmed.Trim('"');
-    }
-
-    private async Task SyncTokenFromPageAsync()
-    {
-        try
-        {
-            if (_pages.IsAgentVisible)
-                return;
-
-            var raw = await _pages.GetUserTokenAsync();
-            if (string.IsNullOrWhiteSpace(raw))
-                return;
-            var token = NormalizeUserToken(raw);
-            if (string.IsNullOrWhiteSpace(token))
-                return;
-            if (token == _config.WebUserToken)
-                return;
-            await ApplyWebUserTokenAsync(token);
-        }
-        catch
-        {
-            // page may not be ready
-        }
     }
 
     private DsdApiIpcBridge GetDsdApiIpc() =>
@@ -1520,7 +1859,8 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         DsdApiHealth? health = null;
         try
         {
-            health = await _pages.ProbeDsdApiHealthAsync(config.WebUserToken, InternalChatChannel.DesktopV1, ct)
+            var bridgeToken = AccountCredentials.ResolveWebUserTokenForRoute(null, config, "deepseek");
+            health = await _pages.ProbeDsdApiHealthAsync(bridgeToken, InternalChatChannel.DesktopV1, ct)
                 .ConfigureAwait(false);
         }
         catch
@@ -1553,6 +1893,8 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
     {
         ReloadConfig();
         GetDsdApiIpc().RefreshConfig(_config);
+        if (_embeddedPanels.TryGetPanel(panel, out var descriptor))
+            _embedCoordinator.NotifyPanelVisible(descriptor.Id);
         await _pages.Agent.PostToPageAsync(new { type = "showEmbeddedPanel", panel });
     }
 
@@ -1617,7 +1959,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         }
 
         _agentWindow = new AgentRunWindow { Owner = _owner };
-        _agentWindow.StopRequested += (_, _) => _runCts?.Cancel();
+        _agentWindow.StopRequested += (_, _) => CancelAgentRun();
         _agentWindow.Closed += (_, _) => _agentWindow = null;
         _agentWindow.Show();
     }
@@ -1628,7 +1970,8 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         string? sessionId = null,
         string? harnessState = null,
         string? playbookId = null,
-        string? skillId = null)
+        string? skillId = null,
+        string? webChatSessionIdHint = null)
     {
         _runCts?.Cancel();
         _runCts = new CancellationTokenSource();
@@ -1642,15 +1985,17 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         }
 
         ReloadConfig();
-        await SyncTokenFromPageAsync();
+        await SyncApiBridgeFromApiAccountsAsync();
         AgentModeHelper.ApplyAgentDefaults(_config);
         var historyCount = 0;
+        string? webChatSessionIdFromSession = webChatSessionIdHint;
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
             try
             {
-                var session = new AgentSessionStore().Load(sessionId);
+                var session = _agentSessions.Load(sessionId);
                 historyCount = session?.Messages?.Count ?? 0;
+                webChatSessionIdFromSession ??= session?.WebChatSessionId;
             }
             catch
             {
@@ -1667,6 +2012,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
             strategy,
             refFileIds?.Count ?? 0,
             historyCount);
+        AgentModeHelper.ApplyExecuteTaskProfile(_config, mode, strategy, task);
         _pages.AgentRefFileIds = refFileIds ?? Array.Empty<string>();
         ConfigStore.Save(_config);
         _localApi.UpdateConfig(_config);
@@ -1736,10 +2082,10 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                 });
             }
 
-            if (string.IsNullOrWhiteSpace(_config.WebUserToken)
+            if (!HasConfiguredDeepSeekApiAccount(_config)
                 && !AgentChatClientFactory.UsesDirectApi(_config))
             {
-                Log("请先在网页登录 DeepSeek，或在设置中启用 API 模式并配置 Key。");
+                Log("请在 API 管理中添加 DeepSeek 账户并填写用户 Token。");
                 return;
             }
 
@@ -1766,6 +2112,36 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                 });
             }
 
+            void PostFilePreview(DeepSeekBrowser.Services.Harness.AgentFilePreview p)
+            {
+                if (!PostToWebUi) return;
+                debugLog?.Write("FILE_PREVIEW", p.Path + " (" + p.Content.Length + " chars)");
+                _ = _pages.PostToPageAsync(new
+                {
+                    type = "agentFilePreview",
+                    path = p.Path,
+                    lang = p.Language,
+                    content = p.Content,
+                    complete = p.Complete
+                });
+            }
+
+            void PostPendingPatch(DeepSeekBrowser.Services.Harness.AgentPendingPatch p)
+            {
+                if (!PostToWebUi) return;
+                debugLog?.Write("PATCH_PENDING", p.Path + " id=" + p.PatchId);
+                _ = _pages.PostToPageAsync(new
+                {
+                    type = "agentPendingPatch",
+                    patchId = p.PatchId,
+                    path = p.Path,
+                    lang = p.Language,
+                    originalContent = p.OriginalContent,
+                    patchedContent = p.PatchedContent,
+                    unifiedDiff = p.UnifiedDiff
+                });
+            }
+
             void PostThinking(string text, bool appendMode)
             {
                 debugLog?.LogThinkingDelta(text);
@@ -1787,7 +2163,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
             try
             {
                 using var bridgeWarm = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                bridgeWarm.CancelAfter(TimeSpan.FromSeconds(8));
+                bridgeWarm.CancelAfter(TimeSpan.FromSeconds(3));
                 await _pages.EnsureApiBridgeReadyAsync(bridgeWarm.Token);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -1818,6 +2194,7 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                     Prompt = task,
                     Strategy = strategy ?? _config.DefaultAgentStrategy ?? AgentStrategies.Execute,
                     ExistingHarnessState = harnessState,
+                    WebChatSessionId = webChatSessionIdFromSession,
                     RefFileIds = refFileIds ?? Array.Empty<string>(),
                     PlaybookId = playbookId,
                     SkillId = skillId,
@@ -1829,6 +2206,8 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                     OnThinking = PostThinking,
                     OnAnswerDelta = PostAnswerDelta,
                     OnActivity = PostActivity,
+                    OnFilePreview = PostFilePreview,
+                    OnPendingPatch = PostPendingPatch,
                     OnShellOutput = chunk =>
                     {
                         if (PostToWebUi)
@@ -1841,6 +2220,16 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                         {
                             type = "agentPhase",
                             phase = HarnessPhasePolicy.TraceLabel(phase),
+                            sessionId
+                        });
+                    },
+                    OnPlanUpdated = plan =>
+                    {
+                        if (!PostToWebUi) return;
+                        _ = _pages.PostToPageAsync(new
+                        {
+                            type = "agentPlanGet",
+                            plan,
                             sessionId
                         });
                     }
@@ -1892,7 +2281,18 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
                     type = "agentDone",
                     summary,
                     answer,
-                    runId = harnessResult.RunId
+                    runId = harnessResult.RunId,
+                    metrics = new
+                    {
+                        durationMs = harnessResult.DurationMs,
+                        promptTokens = harnessResult.PromptTokens,
+                        completionTokens = harnessResult.CompletionTokens,
+                        llmCalls = harnessResult.LlmCallCount,
+                        toolCalls = harnessResult.ToolCallCount,
+                        patchesAccepted = harnessResult.PatchesAccepted,
+                        patchesRejected = harnessResult.PatchesRejected,
+                        patchAcceptRate = harnessResult.PatchAcceptRate
+                    }
                 });
         }
         catch (OperationCanceledException)
@@ -2171,14 +2571,14 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
         }
     }
 
-    private static async Task<string?> PickWorkspaceFolderOnUiAsync()
+    private static async Task<string?> PickWorkspaceFolderOnUiAsync(string title = "选择 Agent 工作区文件夹")
     {
         string? picked = null;
         await RunOnUiAsync(() =>
         {
             var dlg = new Microsoft.Win32.OpenFolderDialog
             {
-                Title = "选择 Agent 工作区文件夹"
+                Title = title
             };
             if (dlg.ShowDialog() == true)
                 picked = AgentWorkspaceRecents.Normalize(dlg.FolderName);
@@ -2262,11 +2662,11 @@ public sealed partial class DesktopAgentHost : IAsyncDisposable
             AgentDesktopConfigSync.Apply(_config);
 
             ReloadConfig();
-            await SyncTokenFromPageAsync();
-            if (string.IsNullOrWhiteSpace(_config.WebUserToken))
+            await SyncApiBridgeFromApiAccountsAsync();
+            if (!HasConfiguredDeepSeekApiAccount(_config))
             {
                 run.Status = "failed";
-                run.Error = "请先在普通对话登录 DeepSeek";
+                run.Error = "请在 API 管理中添加 DeepSeek 账户并填写用户 Token";
                 run.FinishedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 return run;
             }

@@ -12,8 +12,8 @@ public sealed class ConfigStoreTests : TestConfigIsolation
         var cfg = ConfigStore.Load();
         Assert.Equal("deepseek-v4-pro", cfg.Model);
         Assert.Equal("chat", cfg.DefaultWorkMode);
-        Assert.False(cfg.AgentDeepThinking);
-        Assert.False(cfg.AgentWebSearch);
+        Assert.True(cfg.AgentDeepThinking);
+        Assert.True(cfg.AgentWebSearch);
     }
 
     [Fact]

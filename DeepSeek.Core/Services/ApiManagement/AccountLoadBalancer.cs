@@ -137,6 +137,12 @@ public sealed class AccountLoadBalancer
 
     private static bool ProviderSupportsModel(AppConfig config, ApiProviderEntry provider, string model)
     {
+        if (string.Equals(provider.Id, "deepseek", StringComparison.OrdinalIgnoreCase)
+            && DsdOpenAiCompat.ListModelIds(config).Contains(model, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         var models = ResolveProviderModels(config, provider);
         if (models.Count == 0)
             return true;

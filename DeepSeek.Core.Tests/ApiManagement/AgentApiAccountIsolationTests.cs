@@ -42,4 +42,53 @@ public sealed class AgentApiAccountIsolationTests : TestConfigIsolation
 
         Assert.Null(token);
     }
+
+    [Fact]
+    public void ResolveWebUserTokenForRoute_uses_provider_account_when_route_account_null()
+    {
+        ProviderAccountStore.Save([
+            new ProviderAccountRecord
+            {
+                Id = "acc-1",
+                ProviderId = "deepseek",
+                Status = "active",
+                Credentials = new Dictionary<string, string> { ["token"] = "stored-token" }
+            }
+        ]);
+        var config = new AppConfig();
+
+        var token = AccountCredentials.ResolveWebUserTokenForRoute(null, config, "deepseek");
+
+        Assert.Equal("stored-token", token);
+    }
+
+    [Fact]
+    public void ResolveWebUserTokenForRoute_ignores_config_without_api_account()
+    {
+        ProviderAccountStore.Save([]);
+        var config = new AppConfig { WebUserToken = "legacy-web-token" };
+
+        var token = AccountCredentials.ResolveWebUserTokenForRoute(null, config, "deepseek");
+
+        Assert.Null(token);
+    }
+
+    [Fact]
+    public void SyncConfigWebTokenFromApiAccounts_copies_provider_token()
+    {
+        ProviderAccountStore.Save([
+            new ProviderAccountRecord
+            {
+                Id = "acc-1",
+                ProviderId = "deepseek",
+                Status = "active",
+                Credentials = new Dictionary<string, string> { ["token"] = "stored-token" }
+            }
+        ]);
+        var config = new AppConfig { WebUserToken = "stale" };
+
+        AccountCredentials.SyncConfigWebTokenFromApiAccounts(config);
+
+        Assert.Equal("stored-token", config.WebUserToken);
+    }
 }

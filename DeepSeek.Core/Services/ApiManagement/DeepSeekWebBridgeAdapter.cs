@@ -23,7 +23,7 @@ public sealed class DeepSeekWebBridgeAdapter : IApiProviderAdapter
 
     public Task<ApiProviderHealth> ProbeHealthAsync(AppConfig config, CancellationToken ct = default)
     {
-        var token = AccountCredentials.ResolveFirstProviderWebToken(Provider.Id, config);
+        var token = AccountCredentials.ResolveWebUserTokenForRoute(null, config, Provider.Id);
         var online = !string.IsNullOrWhiteSpace(token);
         return Task.FromResult(new ApiProviderHealth
         {

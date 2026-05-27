@@ -64,6 +64,12 @@ public sealed class HarnessRunTracer : IDisposable
 
     public string RunDirectory => _runDir;
 
+    public long ElapsedMilliseconds => _runSw.ElapsedMilliseconds;
+    public int PromptTokens { get { lock (_lock) return _promptTokens; } }
+    public int CompletionTokens { get { lock (_lock) return _completionTokens; } }
+    public int LlmCallCount { get { lock (_lock) return _llmCallCount; } }
+    public int ToolCallCount { get { lock (_lock) return _toolCallCount; } }
+
     public HarnessActiveSpan StartSpan(string name, string? parentSpanId = null, IReadOnlyDictionary<string, object?>? attributes = null)
     {
         var spanId = StartSpanInternal(name, parentSpanId ?? CurrentSpanId, attributes);
@@ -233,6 +239,8 @@ public sealed class HarnessRunTracer : IDisposable
             File.AppendAllText(_tracePath, line + Environment.NewLine);
         }
         AgentDebugLogger.Current?.Write("TRACE", $"{span.Name} {span.DurationMs}ms status={span.Status}");
+        if (_config?.AgentLangfuseLiveExport == true && HarnessLangfuseExporter.IsConfigured(_config))
+            _ = Task.Run(() => HarnessLangfuseExporter.TryExportSpanLiveAsync(span, RunId, TraceId, _config!));
     }
 
     private static Dictionary<string, object?> MergeAttributes(

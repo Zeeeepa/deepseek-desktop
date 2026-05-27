@@ -26,4 +26,6 @@ public interface IWebChatBridge
         CancellationToken ct,
         string? webUserToken = null,
         string? webChatSessionId = null);
+
+    void CancelActiveWebChatStreams();
 }

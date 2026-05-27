@@ -1,6 +1,6 @@
 # DeepSeek Desktop 安装与升级指南
 
-> 撰写：**Auto**（Cursor Agent） · 对应发布：**v2.4.0** · 仓库：[fanstars2318/deepseek-desktop](https://github.com/fanstars2318/deepseek-desktop)
+> 撰写：**Auto**（Cursor Agent） · 对应发布：**v2.5.0** · 仓库：[fanstars2318/deepseek-desktop](https://github.com/fanstars2318/deepseek-desktop)
 
 ---
 
@@ -11,7 +11,7 @@
 | 操作系统 | Windows 10/11（64 位） |
 | 运行时 | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)（框架依赖发布） |
 | Web 引擎 | [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) |
-| 磁盘 | 解压后约 30–80 MB（含 `Assets` 与依赖 DLL） |
+| 磁盘 | 解压后约 70 MB（含 `Assets`、`runtimes/` 与依赖 DLL） |
 | 网络 | 首次使用需访问 DeepSeek 网页或供应商 OAuth 完成登录 |
 
 ---
@@ -19,8 +19,8 @@
 ## 2. 从 GitHub Release 安装
 
 1. 打开 [Releases](https://github.com/fanstars2318/deepseek-desktop/releases)。
-2. 在最新版本（**v2.4.0**）的 **Assets** 中下载：
-   - **`DeepSeek-Desktop-v2.4.0-win-x64.zip`** — WPF 主线 Windows x64 便携包
+2. 在最新版本（**v2.5.0**）的 **Assets** 中下载：
+   - **`DeepSeek-Desktop-v2.5.0-win-x64.zip`** — WPF 主线 Windows x64 便携包
 3. 将 zip **完整解压**到目标文件夹，例如 `D:\Apps\DeepSeekDesktop\`。
 4. 双击 **`DeepSeek.exe`** 启动。
 5. 首次启动在嵌入网页中登录 DeepSeek 账号；在 Agent / **DSD API** 设置中可添加其他 OpenAI 兼容供应商（支持内嵌 OAuth）。

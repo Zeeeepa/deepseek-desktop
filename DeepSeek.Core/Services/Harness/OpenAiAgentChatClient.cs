@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -35,11 +36,43 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
         string? webChatSessionId = null,
         AgentChatOptions? options = null)
     {
-        var (result, _) = await CompleteInternalAsync(
-            messages, model, thinking, search, allowToolCalls, ct, options, stream: false);
-        return result;
+        var apiKey = RequireApiKey();
+        var body = BuildRequestBody(messages, model, thinking, search, allowToolCalls, options, stream: false);
+        var url = AgentChatClientFactory.ResolveBaseUrl(_config) + "/v1/chat/completions";
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        req.Content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json");
+
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            using var resp = await _http.SendAsync(req, ct);
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var ex = new InvalidOperationException($"API 错误 ({(int)resp.StatusCode}): {Truncate(json, 500)}");
+                AgentRequestTelemetry.TryPublish(
+                    _config, model, thinking, search, null, sw.ElapsedMilliseconds, stream: false, "openai-api", ex);
+                throw ex;
+            }
+
+            var result = ParseCompletion(json, model);
+            AgentRequestTelemetry.TryPublish(
+                _config, model, thinking, search, result, sw.ElapsedMilliseconds, stream: false, "openai-api");
+            return result;
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            AgentRequestTelemetry.TryPublish(
+                _config, model, thinking, search, null, sw.ElapsedMilliseconds, stream: false, "openai-api", ex);
+            throw;
+        }
     }
 
+    /// <summary>
+    /// 真流式：逐 chunk 推送 delta（对齐 DeepSeek-TUI / deepcode-cli，避免整段缓冲 60s+ 无 UI 反馈）。
+    /// </summary>
     public async IAsyncEnumerable<WebChatStreamEvent> StreamAsync(
         IReadOnlyList<ChatMessage> messages,
         string model,
@@ -52,50 +85,23 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
         string? webChatSessionId = null,
         AgentChatOptions? options = null)
     {
-        var (result, deltas) = await CompleteInternalAsync(
-            messages, model, thinking, search, allowToolCalls, ct, options, stream: true);
-
-        foreach (var delta in deltas)
-            yield return delta;
-
-        yield return new WebChatStreamDone(result);
-    }
-
-    private async Task<(WebChatResult Result, List<WebChatStreamEvent> Deltas)> CompleteInternalAsync(
-        IReadOnlyList<ChatMessage> messages,
-        string model,
-        bool thinking,
-        bool search,
-        bool allowToolCalls,
-        CancellationToken ct,
-        AgentChatOptions? options,
-        bool stream)
-    {
-        var apiKey = AgentChatClientFactory.ResolveApiKey(_config);
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidOperationException("Agent API 模式需要配置 API Key（设置页或 DeepSeekApiKey）。");
-
-        var body = BuildRequestBody(messages, model, thinking, search, allowToolCalls, options, stream);
+        var sw = Stopwatch.StartNew();
+        var apiKey = RequireApiKey();
+        var body = BuildRequestBody(messages, model, thinking, search, allowToolCalls, options, stream: true);
         var url = AgentChatClientFactory.ResolveBaseUrl(_config) + "/v1/chat/completions";
 
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         req.Content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json");
 
-        if (!stream)
-        {
-            using var resp = await _http.SendAsync(req, ct);
-            var json = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
-                throw new InvalidOperationException($"API 错误 ({(int)resp.StatusCode}): {Truncate(json, 500)}");
-            return (ParseCompletion(json, model), []);
-        }
-
         using var response = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
         {
             var err = await response.Content.ReadAsStringAsync(ct);
-            throw new InvalidOperationException($"API 错误 ({(int)response.StatusCode}): {Truncate(err, 500)}");
+            var ex = new InvalidOperationException($"API 错误 ({(int)response.StatusCode}): {Truncate(err, 500)}");
+            AgentRequestTelemetry.TryPublish(
+                _config, model, thinking, search, null, sw.ElapsedMilliseconds, stream: true, "openai-api", ex);
+            throw ex;
         }
 
         await using var streamBody = await response.Content.ReadAsStreamAsync(ct);
@@ -104,14 +110,16 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
         var contentBuilder = new StringBuilder();
         var reasoningBuilder = new StringBuilder();
         var toolCalls = new Dictionary<int, (string Id, string Name, StringBuilder Args)>();
+        var announcedToolIndexes = new HashSet<int>();
         string? finishReason = null;
-        var deltas = new List<WebChatStreamEvent>();
+        var resolvedModel = model;
         int promptTokens = 0, completionTokens = 0, totalTokens = 0;
+        var chunkTimeout = TimeSpan.FromSeconds(120);
 
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            var line = await reader.ReadLineAsync(ct);
+            var line = await ReadSseLineAsync(reader, chunkTimeout, ct);
             if (line is null)
                 break;
             if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.Ordinal))
@@ -123,6 +131,13 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
             using var doc = JsonDocument.Parse(data);
             var root = doc.RootElement;
             ParseUsage(root, ref promptTokens, ref completionTokens, ref totalTokens);
+            if (root.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String)
+            {
+                var m = modelEl.GetString();
+                if (!string.IsNullOrWhiteSpace(m))
+                    resolvedModel = m;
+            }
+
             if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
                 continue;
 
@@ -139,7 +154,7 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
                 if (text.Length > 0)
                 {
                     reasoningBuilder.Append(text);
-                    deltas.Add(new WebChatStreamDelta("thinking", text));
+                    yield return new WebChatStreamDelta("thinking", text);
                 }
             }
 
@@ -149,7 +164,7 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
                 if (text.Length > 0)
                 {
                     contentBuilder.Append(text);
-                    deltas.Add(new WebChatStreamDelta("content", text));
+                    yield return new WebChatStreamDelta("content", text);
                 }
             }
 
@@ -178,6 +193,12 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
                     }
 
                     toolCalls[index] = entry;
+
+                    if (!string.IsNullOrWhiteSpace(entry.Name)
+                        && announcedToolIndexes.Add(index))
+                    {
+                        yield return new WebChatStreamDelta("tool", entry.Name);
+                    }
                 }
             }
         }
@@ -186,7 +207,7 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
         {
             Content = contentBuilder.Length > 0 ? contentBuilder.ToString() : null,
             ReasoningContent = reasoningBuilder.Length > 0 ? reasoningBuilder.ToString() : null,
-            Model = model,
+            Model = resolvedModel,
             FinishReason = finishReason,
             PromptTokens = promptTokens,
             CompletionTokens = completionTokens,
@@ -201,7 +222,17 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
                 }).ToList()
         };
 
-        return (result, deltas);
+        yield return new WebChatStreamDone(result);
+        AgentRequestTelemetry.TryPublish(
+            _config, model, thinking, search, result, sw.ElapsedMilliseconds, stream: true, "openai-api");
+    }
+
+    private string RequireApiKey()
+    {
+        var apiKey = AgentChatClientFactory.ResolveApiKey(_config);
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("Agent API 模式需要配置 API Key（设置页或 DeepSeekApiKey）。");
+        return apiKey;
     }
 
     private object BuildRequestBody(
@@ -363,6 +394,20 @@ public sealed class OpenAiAgentChatClient : IAgentWebChat, IDisposable
             completionTokens = ct.GetInt32();
         if (usage.TryGetProperty("total_tokens", out var tt))
             totalTokens = tt.GetInt32();
+    }
+
+    private static async Task<string?> ReadSseLineAsync(StreamReader reader, TimeSpan chunkTimeout, CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(chunkTimeout);
+        try
+        {
+            return await reader.ReadLineAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException("SSE chunk timeout after " + (int)chunkTimeout.TotalSeconds + "s");
+        }
     }
 
     private static string Truncate(string text, int max) =>

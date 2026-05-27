@@ -61,7 +61,8 @@ public sealed class HarnessToolExecutor
         HarnessSandboxCoordinator? sandboxCoordinator = null,
         Action<string>? onShellOutput = null)
     {
-        var normalized = BuiltinToolExecutor.NormalizeName(toolName);
+        var normalized = BuiltinToolExecutor.NormalizeName(
+            HarnessXmlToolCallParser.NormalizeToolName(toolName));
         if (HarnessPhasePolicy.IsReadonlyPhase(phase) && !IsReadonlyTool(normalized))
             return HarnessToolExecuteResult.FromOutput(
                 "ERROR: Phase " + HarnessPhasePolicy.TraceLabel(phase) + " 不允许调用工具: " + toolName);
@@ -84,7 +85,7 @@ public sealed class HarnessToolExecutor
                 var text = await ComposioToolBridge.ExecuteAsync(config, toolName, argumentsJson, ct);
                 result = HarnessToolExecuteResult.FromOutput(text);
             }
-            else if (BuiltinToolExecutor.IsBuiltin(toolName))
+            else if (BuiltinToolExecutor.IsBuiltin(normalized))
             {
                 var relPath = ExtractPath(argumentsJson);
                 if (_fileHistory is not null && relPath is not null
@@ -102,6 +103,24 @@ public sealed class HarnessToolExecutor
 
                 result = await _builtin.ExecuteDetailedAsync(
                     normalized, argumentsJson, workspaceRoot, config.AgentAllowShell, ct, sandbox, onShellOutput, config);
+
+                if (result.PendingPatch is not null
+                    && !string.IsNullOrWhiteSpace(_agentSessionId)
+                    && !string.IsNullOrWhiteSpace(workspaceRoot))
+                {
+                    try
+                    {
+                        var store = new HarnessSessionStore(workspaceRoot);
+                        store.SavePatchSnapshot(
+                            _agentSessionId,
+                            result.PendingPatch.Value.Path,
+                            result.PendingPatch.Value.OriginalContent);
+                    }
+                    catch
+                    {
+                        // ignore session persist errors
+                    }
+                }
             }
             else
             {
@@ -172,6 +191,7 @@ public sealed class HarnessToolExecutor
             var plan = root.TryGetProperty("plan", out var p) ? p.GetString() ?? "" : "";
             config.AgentSessionPlanMarkdown = plan;
             ConfigStore.Save(config);
+            _runCallbacks?.OnPlanUpdated?.Invoke(plan);
             return "Plan updated.";
         }
 

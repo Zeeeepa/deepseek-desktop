@@ -280,7 +280,8 @@ public sealed class LocalOpenAiServer : IDisposable
     {
         var resolution = ApiRouteResolver.Resolve(_config, WebBridge, null, req.RequestedModel);
         var routeModel = resolution.ResolvedModel ?? req.ResolvedModel;
-        var webToken = AccountCredentials.ResolveWebUserToken(resolution.Account, _config);
+        var webToken = AccountCredentials.ResolveWebUserTokenForRoute(
+            resolution.Account, _config, resolution.Provider.Id);
         EnsureChannelReady(resolution);
         var clientSessionId = DsdApiSessionCoordinator.EnsureClientSession(
             req.SessionId,
@@ -295,11 +296,6 @@ public sealed class LocalOpenAiServer : IDisposable
         var chatSw = DsdAgentApiScope.HasActiveAgentRun ? System.Diagnostics.Stopwatch.StartNew() : null;
         var firstChunk = true;
         var useThinking = req.Thinking;
-        if (DsdAgentApiScope.HasActiveAgentRun && useThinking)
-        {
-            dbg?.Write("CHAT2API", "Agent/TUI 路径：关闭 thinking 以保证 content 流式输出");
-            useThinking = false;
-        }
 
         dbg?.LogDsdApiRequest(
             routeModel,
@@ -406,7 +402,8 @@ public sealed class LocalOpenAiServer : IDisposable
     {
         var resolution = ApiRouteResolver.Resolve(_config, WebBridge, null, req.RequestedModel);
         var routeModel = resolution.ResolvedModel ?? req.ResolvedModel;
-        var webToken = AccountCredentials.ResolveWebUserToken(resolution.Account, _config);
+        var webToken = AccountCredentials.ResolveWebUserTokenForRoute(
+            resolution.Account, _config, resolution.Provider.Id);
         EnsureChannelReady(resolution);
         var clientSessionId = DsdApiSessionCoordinator.EnsureClientSession(
             req.SessionId,
@@ -420,8 +417,6 @@ public sealed class LocalOpenAiServer : IDisposable
         var dbg = AgentDebugLogger.Current;
         var chatSw = DsdAgentApiScope.HasActiveAgentRun ? System.Diagnostics.Stopwatch.StartNew() : null;
         var useThinking = req.Thinking;
-        if (DsdAgentApiScope.HasActiveAgentRun && useThinking)
-            useThinking = false;
 
         dbg?.LogDsdApiRequest(
             routeModel,
@@ -698,7 +693,8 @@ public sealed class LocalOpenAiServer : IDisposable
     {
         if (resolution.RouteMode == ApiRouteModes.EmbeddedWeb)
         {
-            var token = AccountCredentials.ResolveWebUserToken(resolution.Account, _config);
+            var token = AccountCredentials.ResolveWebUserTokenForRoute(
+                resolution.Account, _config, resolution.Provider.Id);
             if (string.IsNullOrWhiteSpace(token))
                 throw new InvalidOperationException(
                     "请先在 API 管理中为 DeepSeek 添加账户并填写用户 Token（可从浏览器 LocalStorage 的 userToken 获取）。");

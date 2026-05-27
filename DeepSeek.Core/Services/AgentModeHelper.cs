@@ -1,4 +1,5 @@
 using DeepSeekBrowser.Models;
+using DeepSeekBrowser.Services.Harness;
 
 namespace DeepSeekBrowser.Services;
 
@@ -74,5 +75,18 @@ public static class AgentModeHelper
         }
 
         return autoSel;
+    }
+
+    /// <summary>实现类 execute 任务：非专家模式限制步数，避免多轮空转。</summary>
+    public static void ApplyExecuteTaskProfile(AppConfig config, string mode, string? strategy, string? taskText)
+    {
+        if (!string.Equals(strategy, AgentStrategies.Execute, StringComparison.OrdinalIgnoreCase))
+            return;
+        if (!HarnessExecuteReplyGuard.IsImplementationLikePrompt(taskText))
+            return;
+        if (string.Equals(mode, "专家", StringComparison.Ordinal))
+            return;
+        if (config.MaxAgentSteps > 20)
+            config.MaxAgentSteps = 20;
     }
 }

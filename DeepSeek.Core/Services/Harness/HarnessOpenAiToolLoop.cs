@@ -14,7 +14,7 @@ public static class HarnessOpenAiToolLoop
         HarnessRunIntent? intent = null,
         HarnessToolInventory? inventory = null,
         HarnessPhase? phase = null) =>
-        BuildChatOptionsAsync(config, mcp, allowTools, ct, intent, inventory, fullMcp: intent is null, phase);
+        BuildChatOptionsAsync(config, mcp, allowTools, ct, intent, inventory, fullMcp: false, phase);
 
     public static async Task<AgentChatOptions> BuildChatOptionsAsync(
         AppConfig config,
@@ -72,21 +72,30 @@ public static class HarnessOpenAiToolLoop
         }
 
         var maxMcp = Math.Clamp(config.AgentMcpToolsMaxInRequest, 0, 64);
+        var includeMcp = maxMcp > 0
+            && !(config.AgentPreferBuiltinOnExecute
+                 && phase == HarnessPhase.Execute
+                 && intent is null);
         try
         {
-            var mcpTools = await mcp.GetOpenAiToolsAsync(ct);
-            if (intent is not null && !fullMcp)
-                mcpTools = RankMcpToolsByIntent(mcpTools, intent, maxMcp > 0 ? maxMcp : 64);
-
-            var mcpAdded = 0;
-            foreach (var mcpTool in mcpTools)
+            if (includeMcp)
             {
-                if (!HarnessToolFilter.MatchesOpenAiTool(mcpTool, selection))
-                    continue;
-                tools.Add(mcpTool);
-                mcpAdded++;
-                if (maxMcp > 0 && mcpAdded >= maxMcp)
-                    break;
+                var mcpTools = await mcp.GetOpenAiToolsAsync(ct);
+                if (intent is not null && !fullMcp)
+                    mcpTools = RankMcpToolsByIntent(mcpTools, intent, maxMcp > 0 ? maxMcp : 64);
+
+                var mcpAdded = 0;
+                foreach (var mcpTool in mcpTools)
+                {
+                    if (!HarnessToolFilter.MatchesOpenAiTool(mcpTool, selection))
+                        continue;
+                    if (IsDuplicateBuiltinMcpTool(mcpTool))
+                        continue;
+                    tools.Add(mcpTool);
+                    mcpAdded++;
+                    if (maxMcp > 0 && mcpAdded >= maxMcp)
+                        break;
+                }
             }
         }
         catch
@@ -94,7 +103,7 @@ public static class HarnessOpenAiToolLoop
             // MCP tools optional
         }
 
-        if (config.AgentComposioEnabled)
+        if (includeMcp && config.AgentComposioEnabled)
         {
             try
             {
@@ -195,4 +204,17 @@ public static class HarnessOpenAiToolLoop
 
     public static string NormalizeToolName(string rawName) =>
         HarnessOpenAiBuiltinTools.MapToBuiltinExecutorName(rawName);
+
+    /// <summary>
+    /// MCP filesystem 工具常与内置 read/write/list 重名（如 82d65c4e__write_file），
+    /// 保留内置工具、从请求中剔除重复 MCP，减少模型误选（对齐 DeepSeek-TUI 单一路径）。
+    /// </summary>
+    internal static bool IsDuplicateBuiltinMcpTool(object mcpTool)
+    {
+        var name = HarnessToolFilter.ExtractFunctionName(mcpTool);
+        if (string.IsNullOrWhiteSpace(name) || !name.Contains("__", StringComparison.Ordinal))
+            return false;
+        var normalized = HarnessXmlToolCallParser.NormalizeToolName(name);
+        return BuiltinToolExecutor.IsBuiltin(normalized);
+    }
 }

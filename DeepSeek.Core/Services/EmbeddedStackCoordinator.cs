@@ -1,4 +1,5 @@
 using DeepSeekBrowser.Models;
+using DeepSeekBrowser.Services.ApiManagement;
 
 namespace DeepSeekBrowser.Services;
 
@@ -15,12 +16,13 @@ public static class EmbeddedStackBridgeLinker
         DsdOpenAiCompat.EnsureDefaultMappings(config);
         AgentDesktopConfigSync.Apply(config);
 
-        if (string.IsNullOrWhiteSpace(config.WebUserToken))
+        var bridgeToken = AccountCredentials.ResolveWebUserTokenForRoute(null, config, "deepseek");
+        if (string.IsNullOrWhiteSpace(bridgeToken))
             return;
 
         try
         {
-            await web.SyncApiBridgeTokenAsync(config.WebUserToken, ct).ConfigureAwait(false);
+            await web.SyncApiBridgeTokenAsync(bridgeToken, ct).ConfigureAwait(false);
         }
         catch
         {
@@ -39,7 +41,7 @@ public static class EmbeddedStackBridgeLinker
         DsdApiHealth? health = null;
         try
         {
-            health = await web.ProbeDsdApiHealthAsync(config.WebUserToken, InternalChatChannel.DesktopV1, ct)
+            health = await web.ProbeDsdApiHealthAsync(bridgeToken, InternalChatChannel.DesktopV1, ct)
                 .ConfigureAwait(false);
         }
         catch

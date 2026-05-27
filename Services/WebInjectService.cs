@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
+using DeepSeekBrowser.Services.Harness;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -32,6 +33,8 @@ public sealed class WebInjectService : IWebInjectBridge, IDdPageMessenger
     }
 
     public void AttachApiBridge(WebChatBridgeHost apiBridge) => _apiBridge = apiBridge;
+
+    public void CancelActiveWebChatStreams() => _apiBridge?.CancelAllActiveStreams();
 
     public Task SyncApiBridgeTokenAsync(string? webUserToken, CancellationToken ct = default) =>
         _apiBridge?.SyncWebUserTokenAsync(webUserToken) ?? Task.CompletedTask;
@@ -610,10 +613,10 @@ public sealed class WebInjectService : IWebInjectBridge, IDdPageMessenger
         {
             thinking,
             search,
-            modelType = "expert",
+            modelType = WebChatBridgeModelTypes.Resolve(model),
             refFileIds = AgentRefFileIds,
             chatSessionId = webChatSessionId,
-            suppressToolCalls = DsdAgentApiScope.HasActiveAgentRun
+            suppressToolCalls = DsdAgentApiScope.HasActiveAgentRun && !allowToolCalls
         });
         await InjectWebUserTokenOnUiAsync(webUserToken);
 

@@ -1,4 +1,4 @@
-﻿# deepseek_desktop — WPF 单入口构建（无 Qt / WinUI / Bridge）
+# deepseek_desktop — WPF 单入口构建（无 Qt / WinUI / Bridge）
 param(
     [switch]$DeployToDesktop,
     [string]$DeployDir = "",
@@ -48,6 +48,8 @@ if (Test-Path (Join-Path $root "scripts\build-dsd-api-ui.ps1")) {
 if (Test-Path (Join-Path $root "scripts\sync-agent-dsd-api.ps1")) {
     & (Join-Path $root "scripts\sync-agent-dsd-api.ps1") -Root $root
 }
+& (Join-Path $root "scripts\verify-architecture.ps1")
+if ($LASTEXITCODE -ne 0) { throw "architecture verification failed" }
 
 dotnet publish DeepSeekBrowser.csproj -c Release -r win-x64 --self-contained false -o $out "-p:UseAppHost=true"
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
@@ -71,6 +73,11 @@ foreach ($p in $required) {
 
 dotnet test DeepSeek.Core.Tests\DeepSeek.Core.Tests.csproj -c Release
 if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
+& (Join-Path $root "scripts\repair-user-config.ps1") -Configuration Release -RepoRoot $root
+if (Test-Path (Join-Path $root "DeepSeek.Application.Tests\DeepSeek.Application.Tests.csproj")) {
+    dotnet test DeepSeek.Application.Tests\DeepSeek.Application.Tests.csproj -c Release
+    if ($LASTEXITCODE -ne 0) { throw "application tests failed" }
+}
 & (Join-Path $root "scripts\verify-integration.ps1") -PublishDir $out
 & (Join-Path $root "scripts\agent-harness-smoke.ps1") -PublishDir $out
 if (-not $SkipUiVerify) {

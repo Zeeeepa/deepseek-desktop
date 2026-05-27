@@ -23804,8 +23804,15 @@ function Dashboard() {
   reactExports.useEffect(() => {
     const interval = setInterval(() => {
       useDashboardStore.getState().refreshData();
-    }, 6e4);
+    }, 15e3);
     return () => clearInterval(interval);
+  }, []);
+  reactExports.useEffect(() => {
+    const handler = () => {
+      useDashboardStore.getState().refreshData();
+    };
+    window.addEventListener("dsd-stats-changed", handler);
+    return () => window.removeEventListener("dsd-stats-changed", handler);
   }, []);
   reactExports.useEffect(() => {
     if (proxyStatus) {

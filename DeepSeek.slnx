@@ -1,4 +1,10 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DeepSeek.Application/DeepSeek.Application.csproj" />
+    <Project Path="src/DeepSeek.Domain/DeepSeek.Domain.csproj" />
+    <Project Path="src/DeepSeek.Infrastructure/DeepSeek.Infrastructure.csproj" />
+  </Folder>
+  <Project Path="DeepSeek.Application.Tests/DeepSeek.Application.Tests.csproj" />
   <Project Path="DeepSeek.Core.Tests/DeepSeek.Core.Tests.csproj" />
   <Project Path="DeepSeek.Core/DeepSeek.Core.csproj" />
   <Project Path="DeepSeekBrowser.csproj" />

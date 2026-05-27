@@ -1,0 +1,38 @@
+[
+  {
+    "id": "smoke-greeting",
+    "prompt": "Reply with exactly: pong",
+    "expectedContains": ["pong"],
+    "tags": ["smoke"]
+  },
+  {
+    "id": "write-file",
+    "prompt": "Create hello.txt in workspace with content: hello world",
+    "expectedContains": ["hello"],
+    "tags": ["write", "tool"]
+  },
+  {
+    "id": "fix-lint",
+    "prompt": "Fix any obvious syntax error in the smallest file you find",
+    "expectedContains": ["edit", "已编辑", "PATCH_PENDING", "write"],
+    "tags": ["edit", "lint"]
+  },
+  {
+    "id": "run-test",
+    "prompt": "Run dotnet test if a .csproj exists, otherwise list_dir",
+    "expectedContains": ["exit=", "list_dir", "test"],
+    "tags": ["shell"]
+  },
+  {
+    "id": "multi-file-refactor",
+    "prompt": "Rename a local variable in one file using edit tool (old_string/new_string)",
+    "expectedContains": ["edit", "old_string"],
+    "tags": ["edit", "refactor"]
+  },
+  {
+    "id": "read-only-explore",
+    "prompt": "Explore repo structure with list_dir and grep only; do not write files",
+    "expectedContains": ["list_dir", "grep", "[dir]", "[file]"],
+    "tags": ["readonly", "explore"]
+  }
+]
